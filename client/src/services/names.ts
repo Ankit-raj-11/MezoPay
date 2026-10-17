@@ -43,6 +43,7 @@ export async function lookupAddress(address: `0x${string}`): Promise<string | nu
 export async function checkNameAvailability(name: string): Promise<boolean> {
   try {
     const cleanName = name.replace('@mezo', '').toLowerCase().trim();
+    if (cleanName.length < 3 || cleanName.length > 20) return false;
     const isAvail = await publicClient.readContract({
       address: CONTRACT_ADDRESSES.NAME_REGISTRY,
       abi: NAME_REGISTRY_ABI,
@@ -53,5 +54,21 @@ export async function checkNameAvailability(name: string): Promise<boolean> {
   } catch (err) {
     console.warn('Name availability check failed:', err);
     return false;
+  }
+}
+
+export async function registerNameOnChain(name: string, walletClient: any): Promise<`0x${string}` | null> {
+  const cleanName = name.replace('@mezo', '').toLowerCase().trim();
+  try {
+    const txHash = await walletClient.writeContract({
+      address: CONTRACT_ADDRESSES.NAME_REGISTRY,
+      abi: NAME_REGISTRY_ABI,
+      functionName: 'registerName',
+      args: [cleanName],
+    });
+    return txHash;
+  } catch (err) {
+    console.error('Failed to register name on chain:', err);
+    throw err;
   }
 }

@@ -9,6 +9,7 @@ interface SendNameModalProps {
   onClose: () => void;
   onSendDirect: (to: `0x${string}`, amount: string, note: string) => Promise<boolean>;
   remainingDailySpend: string;
+  initialHandle?: string;
 }
 
 export const SendNameModal: React.FC<SendNameModalProps> = ({
@@ -16,10 +17,17 @@ export const SendNameModal: React.FC<SendNameModalProps> = ({
   onClose,
   onSendDirect,
   remainingDailySpend,
+  initialHandle = '',
 }) => {
-  const [handle, setHandle] = useState('');
+  const [handle, setHandle] = useState(initialHandle);
   const [resolvedAddress, setResolvedAddress] = useState<`0x${string}` | null>(null);
   const [isSearching, setIsSearching] = useState(false);
+
+  React.useEffect(() => {
+    if (initialHandle) {
+      handleSearch(initialHandle);
+    }
+  }, [initialHandle, isOpen]);
   const [amount, setAmount] = useState('10.00');
   const [note, setNote] = useState('Coffee on Mezo');
   const [isSending, setIsSending] = useState(false);

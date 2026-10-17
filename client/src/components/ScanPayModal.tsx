@@ -24,6 +24,7 @@ export const ScanPayModal: React.FC<ScanPayModalProps> = ({
   const [scanMode, setScanMode] = useState<'camera' | 'manual'>('camera');
   const [payloadInput, setPayloadInput] = useState(initialPayload);
   const [parsedPayment, setParsedPayment] = useState<any | null>(null);
+  const [customAmount, setCustomAmount] = useState('10.00');
   const [merchantName, setMerchantName] = useState<string | null>(null);
   const [isVerified, setIsVerified] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -51,14 +52,15 @@ export const ScanPayModal: React.FC<ScanPayModalProps> = ({
       const chain = url.searchParams.get('chain');
       const token = url.searchParams.get('token');
       const addr = url.searchParams.get('addr') as `0x${string}` | null;
-      const amount = url.searchParams.get('amount');
+      let amount = url.searchParams.get('amount');
       const exp = url.searchParams.get('exp');
       const salt = url.searchParams.get('salt');
       const sig = url.searchParams.get('sig');
-      const note = url.searchParams.get('note') || 'Merchant Payment';
+      const note = url.searchParams.get('note') || 'Direct Mezo Payment';
+      const handleParam = url.searchParams.get('handle');
 
-      if (!addr || !amount) {
-        setErrorMsg('Invalid QR: Missing recipient address or amount');
+      if (!addr) {
+        setErrorMsg('Invalid QR: Missing recipient wallet address');
         setParsedPayment(null);
         return;
       }
@@ -75,30 +77,42 @@ export const ScanPayModal: React.FC<ScanPayModalProps> = ({
         return;
       }
 
+      // Check Expiry if dynamic QR
       if (exp) {
         const expiryTime = Number(exp);
         if (Math.floor(Date.now() / 1000) > expiryTime) {
-          setErrorMsg('QR Expired: This payment invoice has timed out.');
+          setErrorMsg('QR Expired: This payment invoice has timed out. Please ask recipient to regenerate.');
           setParsedPayment(null);
           return;
         }
       }
 
+      const isPermanentQR = !amount || !sig;
+      if (amount) {
+        setCustomAmount(amount);
+      } else {
+        amount = customAmount || '10.00';
+      }
+
       // Check remaining daily spend limit
       if (Number(amount) > Number(remainingDailySpend)) {
         setErrorMsg(`Payment of ${amount} MUSD exceeds your remaining daily limit of ${remainingDailySpend} MUSD.`);
-        setParsedPayment(null);
-        return;
       }
 
-      // Look up merchant info
-      const onChainHandle = await lookupAddress(addr);
-      let displayName = onChainHandle ? `@${onChainHandle}` : `${addr.slice(0, 6)}...${addr.slice(-4)}`;
+      // Look up merchant or recipient handle
+      let displayName = handleParam ? `@${handleParam}` : `${addr.slice(0, 6)}...${addr.slice(-4)}`;
       let verifiedStatus = false;
+
+      try {
+        const onChainHandle = await lookupAddress(addr);
+        if (onChainHandle) {
+          displayName = `@${onChainHandle}`;
+        }
+      } catch {}
 
       // Check verified merchants list
       for (const [key, vm] of Object.entries(VERIFIED_MERCHANTS)) {
-        if (onChainHandle === key || vm.handle === key) {
+        if (displayName.toLowerCase().includes(key) || vm.handle === key) {
           displayName = vm.name;
           verifiedStatus = true;
           break;
@@ -116,6 +130,7 @@ export const ScanPayModal: React.FC<ScanPayModalProps> = ({
         salt,
         sig,
         isDynamic: Boolean(sig && salt && exp),
+        isPermanentQR,
       });
     } catch {
       setErrorMsg('Failed to parse QR payload. Please ensure it is a valid MezoPay link.');
@@ -125,13 +140,20 @@ export const ScanPayModal: React.FC<ScanPayModalProps> = ({
 
   const handlePay = async () => {
     if (!parsedPayment) return;
+    const effectiveAmount = parsedPayment.isPermanentQR ? customAmount : parsedPayment.amount;
+
+    if (Number(effectiveAmount) > Number(remainingDailySpend)) {
+      setErrorMsg(`Payment of ${effectiveAmount} MUSD exceeds your remaining daily limit (${remainingDailySpend} MUSD).`);
+      return;
+    }
+
     setIsProcessing(true);
     setErrorMsg(null);
 
     try {
       const ok = await onExecutePayment(
         parsedPayment.addr,
-        parsedPayment.amount,
+        effectiveAmount,
         parsedPayment.note,
         parsedPayment.isDynamic ? {
           exp: Number(parsedPayment.exp),
@@ -142,10 +164,10 @@ export const ScanPayModal: React.FC<ScanPayModalProps> = ({
 
       if (ok) {
         setPaymentSuccess(true);
-        soundbox.announcePayment(parsedPayment.amount, merchantName || undefined);
+        soundbox.announcePayment(effectiveAmount, merchantName || undefined);
         confetti({
-          particleCount: 80,
-          spread: 70,
+          particleCount: 90,
+          spread: 80,
           origin: { y: 0.6 },
           colors: ['#00e599', '#f7931a', '#ffffff'],
         });
@@ -180,9 +202,12 @@ export const ScanPayModal: React.FC<ScanPayModalProps> = ({
             }}>
               <QrCode size={18} />
             </div>
-            <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '20px', fontWeight: 700 }}>
-              Scan & Pay
-            </h2>
+            <div>
+              <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '18px', fontWeight: 800 }}>
+                Scan & Pay
+              </h2>
+              <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>MezoPay Fast Instant Payment</span>
+            </div>
           </div>
           <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>
             <X size={20} />
@@ -209,7 +234,7 @@ export const ScanPayModal: React.FC<ScanPayModalProps> = ({
               Payment Sent!
             </h3>
             <p style={{ color: 'var(--text-secondary)', fontSize: '14px', marginBottom: '20px' }}>
-              Paid <strong style={{ color: '#fff' }}>{parsedPayment?.amount} MUSD</strong> to {merchantName}
+              Paid <strong style={{ color: '#fff' }}>{parsedPayment?.isPermanentQR ? customAmount : parsedPayment?.amount} MUSD</strong> to {merchantName}
             </p>
             <button className="btn-primary" onClick={onClose}>
               Done
@@ -231,7 +256,7 @@ export const ScanPayModal: React.FC<ScanPayModalProps> = ({
                 style={{ flex: 1, padding: '8px', fontSize: '12px' }}
                 onClick={() => setScanMode('manual')}
               >
-                📋 Paste Link / Presets
+                📋 Paste Link / Demo
               </button>
             </div>
 
@@ -249,7 +274,7 @@ export const ScanPayModal: React.FC<ScanPayModalProps> = ({
                 <div style={{ display: 'flex', gap: '8px' }}>
                   <input
                     type="text"
-                    placeholder="https://mezopay.app/pay?addr=0x...&amount=12.50"
+                    placeholder="https://.../pay?addr=0x...&amount=12.50"
                     value={payloadInput}
                     onChange={(e) => {
                       setPayloadInput(e.target.value);
@@ -285,7 +310,7 @@ export const ScanPayModal: React.FC<ScanPayModalProps> = ({
                 className="badge"
                 style={{ background: 'rgba(255, 255, 255, 0.05)', border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)', cursor: 'pointer' }}
                 onClick={() => {
-                  const demoUrl = 'https://mezopay.app/pay?chain=31611&addr=0x90F79bf6EB2c4f870365E785982E1f101E93b906&amount=12.50&note=ChaiPoint%20Morning%20Combo';
+                  const demoUrl = 'https://mezopay.app/pay?chain=31611&addr=0x90F79bf6EB2c4f870365E785982E1f101E93b906&amount=12.50&note=ChaiPoint%20Morning%20Combo&handle=chaipoint';
                   setPayloadInput(demoUrl);
                   parsePayload(demoUrl);
                 }}
@@ -296,7 +321,7 @@ export const ScanPayModal: React.FC<ScanPayModalProps> = ({
                 className="badge"
                 style={{ background: 'rgba(255, 255, 255, 0.05)', border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)', cursor: 'pointer' }}
                 onClick={() => {
-                  const demoUrl = 'https://mezopay.app/pay?chain=31611&addr=0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65&amount=25.00&note=Dinner%20Share';
+                  const demoUrl = 'https://mezopay.app/pay?chain=31611&addr=0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65&amount=25.00&note=Dinner%20Share&handle=bob';
                   setPayloadInput(demoUrl);
                   parsePayload(demoUrl);
                 }}
@@ -328,9 +353,9 @@ export const ScanPayModal: React.FC<ScanPayModalProps> = ({
               <div className="glass-card" style={{ marginBottom: '20px', border: '1px solid var(--border-highlight)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '14px' }}>
                   <div>
-                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600 }}>RECIPIENT</div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 700, letterSpacing: '0.05em' }}>RECIPIENT</div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px' }}>
-                      <span style={{ fontSize: '17px', fontWeight: 700, color: '#fff' }}>
+                      <span style={{ fontSize: '18px', fontWeight: 800, color: '#fff' }}>
                         {merchantName}
                       </span>
                       {isVerified && (
@@ -340,11 +365,38 @@ export const ScanPayModal: React.FC<ScanPayModalProps> = ({
                       )}
                     </div>
                   </div>
+
                   <div style={{ textAlign: 'right' }}>
-                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600 }}>AMOUNT</div>
-                    <div style={{ fontSize: '22px', fontWeight: 800, color: 'var(--mezo-green)' }}>
-                      {parsedPayment.amount} <span style={{ fontSize: '14px' }}>MUSD</span>
-                    </div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 700, letterSpacing: '0.05em' }}>AMOUNT</div>
+                    {parsedPayment.isPermanentQR ? (
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '4px' }}>
+                        <span style={{ fontSize: '18px', fontWeight: 800, color: 'var(--mezo-green)' }}>$</span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={customAmount}
+                          onChange={(e) => setCustomAmount(e.target.value)}
+                          style={{
+                            width: '90px',
+                            background: 'rgba(255, 255, 255, 0.08)',
+                            border: '1px solid var(--border-highlight)',
+                            borderRadius: 'var(--radius-sm)',
+                            color: 'var(--mezo-green)',
+                            fontFamily: 'var(--font-display)',
+                            fontSize: '20px',
+                            fontWeight: 800,
+                            padding: '2px 6px',
+                            textAlign: 'right',
+                            outline: 'none',
+                          }}
+                        />
+                        <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>MUSD</span>
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: '22px', fontWeight: 800, color: 'var(--mezo-green)' }}>
+                        {parsedPayment.amount} <span style={{ fontSize: '14px' }}>MUSD</span>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -372,7 +424,7 @@ export const ScanPayModal: React.FC<ScanPayModalProps> = ({
                 }}>
                   <span>Security Mode:</span>
                   <span style={{ color: parsedPayment.isDynamic ? 'var(--mezo-green)' : 'var(--btc-orange)', fontWeight: 600 }}>
-                    {parsedPayment.isDynamic ? '✓ Merchant-Signed Reference (0-Gas)' : 'Direct Transfer'}
+                    {parsedPayment.isDynamic ? '✓ Merchant-Signed Reference (0-Gas)' : 'Permanent QR Direct Transfer'}
                   </span>
                 </div>
               </div>
@@ -384,7 +436,7 @@ export const ScanPayModal: React.FC<ScanPayModalProps> = ({
               onClick={handlePay}
             >
               {isProcessing ? (
-                <>Processing on Mezo...</>
+                <>Processing on Mezo Testnet...</>
               ) : (
                 <>
                   <Zap size={18} />
