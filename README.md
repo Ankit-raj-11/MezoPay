@@ -48,12 +48,16 @@ MezoPay is a Web2-speed payment engine built natively on **Mezo Network** (Testn
 ```
 mezoPay/
 ├── contracts/               # Foundry smart contracts
-│   ├── src/                 # Solidity contracts (MezoNameRegistry, MezoPaymentCore)
-│   ├── test/                # Invariant & adversarial Foundry tests
+│   ├── src/                 # Solidity contracts (MezoNameRegistry, MezoPaymentCore, MockPaymentTarget)
+│   ├── test/                # 48 passing unit, fuzz, and invariant tests
+│   ├── abis/                # Frozen contract ABIs for frontend integration
+│   ├── script/              # DeployScript for Mezo Testnet
 │   └── foundry.toml         # Foundry configuration with Mezo RPC
 ├── scripts/                 # Testnet verification & inspection scripts
 │   ├── verify-testnet.cjs   # Live RPC validation for Chain ID, MUSD, and TroveManager
-│   └── inspect-proxy.cjs    # ERC-1967 implementation slot inspector
+│   ├── query-sample-trove.cjs # Real-time sample trove health query script
+│   ├── export-abis.cjs      # ABI export tool from Foundry out/
+│   └── check-borrowerops.cjs # Proxy interface inspector
 ├── IMPLEMENTATION_PLAN.md   # Complete engineering blueprint & threat model (Review 1.6)
 └── QA_CHECKLIST.md          # 29-point manual QA testing checklist
 ```
@@ -67,11 +71,15 @@ Run the live testnet verification script:
 node scripts/verify-testnet.cjs
 ```
 
-Compile smart contracts:
+Run smart contract test suite (48 tests passing):
 ```bash
 cd contracts
-forge build
-forge test
+forge test -vvv
+```
+
+Deploy smart contracts to Mezo Testnet:
+```bash
+forge script script/Deploy.s.sol --rpc-url https://rpc.test.mezo.org --broadcast
 ```
 
 ---

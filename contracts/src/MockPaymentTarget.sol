@@ -6,7 +6,7 @@ pragma solidity 0.8.24;
 contract MockPaymentTarget {
     event MockPaymentExecuted(address indexed payer, address indexed payee, uint256 amount);
 
-    function payDirect(address payee, uint256 amount, string calldata note) external {
+    function payDirect(address payee, uint256 amount, string calldata /* note */) external {
         require(payee != address(0), "Invalid payee");
         require(amount > 0, "Invalid amount");
         emit MockPaymentExecuted(msg.sender, payee, amount);
