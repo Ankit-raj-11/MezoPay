@@ -11,18 +11,28 @@ contract DeployScript is Script {
     address public constant MUSD_TESTNET = 0x118917a40FAF1CD7a13dB0Ef56C86De7973Ac503;
 
     function run() external {
-        uint256 deployerPrivateKey = vm.envOr("PRIVATE_KEY", uint256(0));
+        uint256 deployerPrivateKey = 0;
+        try vm.envBytes32("PRIVATE_KEY") returns (bytes32 pkBytes) {
+            deployerPrivateKey = uint256(pkBytes);
+        } catch {
+            try vm.envUint("PRIVATE_KEY") returns (uint256 pkUint) {
+                deployerPrivateKey = pkUint;
+            } catch {
+                deployerPrivateKey = 0;
+            }
+        }
         
         if (deployerPrivateKey != 0) {
+            console.log("Broadcasting with account:", vm.addr(deployerPrivateKey));
             vm.startBroadcast(deployerPrivateKey);
         } else {
+            console.log("Warning: No private key found in env, using default sender");
             vm.startBroadcast();
         }
 
         console.log("--------------------------------------------------");
         console.log("Deploying MezoPay Smart Contracts to Mezo Testnet");
         console.log("Chain ID:", block.chainid);
-        console.log("Deployer:", msg.sender);
         console.log("--------------------------------------------------");
 
         // 1. Deploy MezoNameRegistry

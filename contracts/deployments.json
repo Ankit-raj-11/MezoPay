@@ -1,0 +1,23 @@
+{
+  "network": "Mezo Testnet",
+  "chainId": 31611,
+  "rpcUrl": "https://rpc.test.mezo.org",
+  "explorerUrl": "https://explorer.test.mezo.org",
+  "deployer": "0x0134820Adde870CF0e24b70D73C5E0a5DF589A35",
+  "timestamp": "2026-10-17T07:57:14Z",
+  "contracts": {
+    "MezoNameRegistry": {
+      "address": "0x2068372B91fa992Ac01277F27835244530A46299",
+      "explorer": "https://explorer.test.mezo.org/address/0x2068372B91fa992Ac01277F27835244530A46299"
+    },
+    "MezoPaymentCore": {
+      "address": "0x9c09b398d34481Dd65CdCDB07090FF2F2CC9E5f6",
+      "musdToken": "0x118917a40FAF1CD7a13dB0Ef56C86De7973Ac503",
+      "explorer": "https://explorer.test.mezo.org/address/0x9c09b398d34481Dd65CdCDB07090FF2F2CC9E5f6"
+    },
+    "MockPaymentTarget": {
+      "address": "0x7617Bbb75f203c7d181B45B632F548eF1406A26d",
+      "explorer": "https://explorer.test.mezo.org/address/0x7617Bbb75f203c7d181B45B632F548eF1406A26d"
+    }
+  }
+}

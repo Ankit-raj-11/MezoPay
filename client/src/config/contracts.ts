@@ -12,9 +12,10 @@ export const CONTRACT_ADDRESSES = {
   SORTED_TROVES: '0x722E4D24FD6Ff8b0AC679450F3D91294607268fA' as `0x${string}`,
   HINT_HELPERS: '0x4e4cBA3779d56386ED43631b4dCD6d8EacEcBCF6' as `0x${string}`,
 
-  // MezoPay custom contracts (defaults or loaded from env)
-  NAME_REGISTRY: (import.meta.env.VITE_NAME_REGISTRY_ADDRESS || '0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496') as `0x${string}`,
-  PAYMENT_CORE: (import.meta.env.VITE_PAYMENT_CORE_ADDRESS || '0x34A1D3fff3958843C43aD80F30b94c510645C316') as `0x${string}`,
+  // MezoPay custom contracts deployed live on Mezo Testnet (Chain ID 31611)
+  NAME_REGISTRY: (import.meta.env.VITE_NAME_REGISTRY_ADDRESS || '0x2068372B91fa992Ac01277F27835244530A46299') as `0x${string}`,
+  PAYMENT_CORE: (import.meta.env.VITE_PAYMENT_CORE_ADDRESS || '0x9c09b398d34481Dd65CdCDB07090FF2F2CC9E5f6') as `0x${string}`,
+  MOCK_TARGET: (import.meta.env.VITE_MOCK_TARGET_ADDRESS || '0x7617Bbb75f203c7d181B45B632F548eF1406A26d') as `0x${string}`,
 };
 
 export const NAME_REGISTRY_ABI = nameRegistryAbi;

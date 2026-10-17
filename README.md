@@ -40,6 +40,9 @@ MezoPay is a Web2-speed payment engine built natively on **Mezo Network** (Testn
 | **PriceFeed Oracle** | `0x86bCF0841622a5dAC14A313a15f96A95421b9366` |
 | **SortedTroves** | `0x722E4D24FD6Ff8b0AC679450F3D91294607268fA` |
 | **HintHelpers** | `0x4e4cBA3779d56386ED43631b4dCD6d8EacEcBCF6` |
+| **MezoNameRegistry** *(Deployed Live)* | `0x2068372B91fa992Ac01277F27835244530A46299` |
+| **MezoPaymentCore** *(Deployed Live)* | `0x9c09b398d34481Dd65CdCDB07090FF2F2CC9E5f6` |
+| **MockPaymentTarget** *(Deployed Live)* | `0x7617Bbb75f203c7d181B45B632F548eF1406A26d` |
 
 ---
 
