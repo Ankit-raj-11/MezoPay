@@ -1,6 +1,23 @@
-import React, { useState } from 'react';
-import { ShieldCheck, Wallet, Fingerprint, KeyRound, AlertCircle } from 'lucide-react';
-import { DEMO_PROFILES, getInjectedWalletClient, getWalletClientForPrivateKey } from '../services/web3';
+import React, { useState, useEffect } from 'react';
+import {
+  ShieldCheck,
+  Wallet,
+  KeyRound,
+  AlertCircle,
+  Copy,
+  Check,
+  ArrowRight,
+  RotateCcw,
+} from 'lucide-react';
+import { getInjectedWalletClient, getInAppWalletClient } from '../services/web3';
+import {
+  hasVault,
+  getStoredVaultAddress,
+  createVault,
+  unlockVault,
+  restoreVaultWithMnemonic,
+  type UnlockedWallet,
+} from '../services/walletVault';
 import { mezoTestnet } from '../config/chains';
 
 interface AuthModalProps {
@@ -8,54 +25,229 @@ interface AuthModalProps {
   onAuthenticated: (profile: any, walletClient: any, isMetaMask: boolean) => void;
 }
 
+type AuthMode = 'unlock' | 'create_pin' | 'show_phrase' | 'verify_phrase' | 'restore' | 'injected';
+
 export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onAuthenticated }) => {
-  const [authMethod, setAuthMethod] = useState<'pin' | 'wallet' | 'profiles'>('pin');
-  const [pin, setPin] = useState('');
+  const [mode, setMode] = useState<AuthMode>('unlock');
+  const [storedAddress, setStoredAddress] = useState<`0x${string}` | null>(null);
+
+  // PIN inputs
+  const [pinInput, setPinInput] = useState<string>('');
+  const [newPinCandidate, setNewPinCandidate] = useState<string>('');
+  const [confirmPinStep, setConfirmPinStep] = useState<boolean>(false);
+
+  // Lockout after 5 failed attempts
+  const [failedAttempts, setFailedAttempts] = useState<number>(0);
+  const [lockoutUntil, setLockoutUntil] = useState<number>(0);
+  const [lockoutRemaining, setLockoutRemaining] = useState<number>(0);
+
+  // Recovery phrase flow
+  const [generatedWallet, setGeneratedWallet] = useState<UnlockedWallet | null>(null);
+  const [copiedPhrase, setCopiedPhrase] = useState(false);
+  const [verifyIndices, setVerifyIndices] = useState<[number, number]>([2, 7]); // 1-indexed (e.g. Word 3 and 8)
+  const [verifyWord1, setVerifyWord1] = useState('');
+  const [verifyWord2, setVerifyWord2] = useState('');
+
+  // Restore flow
+  const [restoreMnemonicInput, setRestoreMnemonicInput] = useState('');
+
+  // Status and feedback
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [isConnectingWallet, setIsConnectingWallet] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+
+  // Initialize mode based on whether device already has an encrypted vault
+  useEffect(() => {
+    if (!isOpen) return;
+    const exists = hasVault();
+    if (exists) {
+      setMode('unlock');
+      setStoredAddress(getStoredVaultAddress());
+    } else {
+      setMode('create_pin');
+      setStoredAddress(null);
+    }
+    setPinInput('');
+    setConfirmPinStep(false);
+    setErrorMsg(null);
+  }, [isOpen]);
+
+  // Lockout countdown timer
+  useEffect(() => {
+    if (lockoutUntil > Date.now()) {
+      const interval = setInterval(() => {
+        const remaining = Math.max(0, Math.ceil((lockoutUntil - Date.now()) / 1000));
+        setLockoutRemaining(remaining);
+        if (remaining <= 0) {
+          clearInterval(interval);
+          setFailedAttempts(0);
+        }
+      }, 1000);
+      return () => clearInterval(interval);
+    }
+  }, [lockoutUntil]);
 
   if (!isOpen) return null;
 
-  // Handle PIN Unlock
-  const handlePinDigit = (digit: string) => {
-    if (pin.length < 4) {
-      const nextPin = pin + digit;
-      setPin(nextPin);
-      setErrorMsg(null);
+  // Handle PIN Digit Entry for Unlock or Setup
+  const handlePinDigit = async (digit: string) => {
+    if (lockoutRemaining > 0 || isProcessing) return;
+    if (pinInput.length >= 4) return;
 
-      if (nextPin.length === 4) {
-        // Fast authenticate with primary profile or demo
-        setTimeout(() => {
-          const profile = DEMO_PROFILES[0];
-          const wc = getWalletClientForPrivateKey(profile.privateKey);
-          onAuthenticated(profile, wc, false);
-        }, 200);
+    const nextPin = pinInput + digit;
+    setPinInput(nextPin);
+    setErrorMsg(null);
+
+    if (nextPin.length === 4) {
+      if (mode === 'unlock') {
+        // Attempt decryption
+        setIsProcessing(true);
+        try {
+          const unlocked = await unlockVault(nextPin);
+          const client = getInAppWalletClient(unlocked.account);
+          const profile = {
+            id: 'in_app_wallet',
+            name: 'Device Wallet',
+            handle: '',
+            address: unlocked.address,
+            role: 'consumer' as const,
+          };
+          setPinInput('');
+          setFailedAttempts(0);
+          onAuthenticated(profile, client, false);
+        } catch {
+          const nextFailed = failedAttempts + 1;
+          setFailedAttempts(nextFailed);
+          setPinInput('');
+          if (nextFailed >= 5) {
+            const until = Date.now() + 30000;
+            setLockoutUntil(until);
+            setLockoutRemaining(30);
+            setErrorMsg('Too many wrong attempts. App locked for 30 seconds.');
+          } else {
+            setErrorMsg(`Incorrect PIN (${nextFailed}/5 attempts)`);
+          }
+        } finally {
+          setIsProcessing(false);
+        }
+      } else if (mode === 'create_pin') {
+        if (!confirmPinStep) {
+          // First pass of PIN entry
+          setNewPinCandidate(nextPin);
+          setPinInput('');
+          setConfirmPinStep(true);
+        } else {
+          // Confirmation pass
+          if (nextPin === newPinCandidate) {
+            setIsProcessing(true);
+            try {
+              const wallet = await createVault(nextPin);
+              setGeneratedWallet(wallet);
+              // Pick 2 random distinct indices for backup verification (1 to 12)
+              const idx1 = Math.floor(Math.random() * 6) + 1; // 1..6
+              const idx2 = Math.floor(Math.random() * 6) + 7; // 7..12
+              setVerifyIndices([idx1, idx2]);
+              setMode('show_phrase');
+              setPinInput('');
+              setConfirmPinStep(false);
+            } catch (err: any) {
+              setErrorMsg(err.message || 'Failed to initialize wallet vault.');
+              setPinInput('');
+              setConfirmPinStep(false);
+            } finally {
+              setIsProcessing(false);
+            }
+          } else {
+            setErrorMsg('PINs do not match. Please try again.');
+            setPinInput('');
+            setConfirmPinStep(false);
+            setNewPinCandidate('');
+          }
+        }
       }
     }
   };
 
   const handleBackspace = () => {
-    setPin((prev) => prev.slice(0, -1));
+    if (isProcessing || lockoutRemaining > 0) return;
+    setPinInput((prev) => prev.slice(0, -1));
+  };
+
+  // Complete Word Verification and Launch App
+  const handleVerifyWordsAndFinish = () => {
+    if (!generatedWallet) return;
+    const words = generatedWallet.mnemonic.split(' ');
+    const expected1 = words[verifyIndices[0] - 1]?.toLowerCase().trim();
+    const expected2 = words[verifyIndices[1] - 1]?.toLowerCase().trim();
+
+    if (
+      verifyWord1.toLowerCase().trim() === expected1 &&
+      verifyWord2.toLowerCase().trim() === expected2
+    ) {
+      const client = getInAppWalletClient(generatedWallet.account);
+      const profile = {
+        id: 'in_app_wallet',
+        name: 'Device Wallet',
+        handle: '',
+        address: generatedWallet.address,
+        role: 'consumer' as const,
+      };
+      onAuthenticated(profile, client, false);
+    } else {
+      setErrorMsg(`Words do not match. Please check Word #${verifyIndices[0]} and Word #${verifyIndices[1]}.`);
+    }
+  };
+
+  // Restore Wallet with Mnemonic
+  const handleRestoreSubmit = async () => {
+    const trimmed = restoreMnemonicInput.trim().toLowerCase();
+    const wordList = trimmed.split(/\s+/);
+    if (wordList.length !== 12 && wordList.length !== 24) {
+      setErrorMsg('Please enter a valid 12-word recovery phrase.');
+      return;
+    }
+
+    if (pinInput.length !== 4) {
+      setErrorMsg('Please enter a 4-digit App lock PIN.');
+      return;
+    }
+
+    setIsProcessing(true);
+    setErrorMsg(null);
+    try {
+      const restored = await restoreVaultWithMnemonic(trimmed, pinInput);
+      const client = getInAppWalletClient(restored.account);
+      const profile = {
+        id: 'in_app_wallet',
+        name: 'Device Wallet',
+        handle: '',
+        address: restored.address,
+        role: 'consumer' as const,
+      };
+      onAuthenticated(profile, client, false);
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Failed to restore wallet. Please verify your phrase.');
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   // Connect Injected Browser Wallet (MetaMask, Rabby, etc.)
   const handleConnectInjectedWallet = async () => {
-    setIsConnectingWallet(true);
+    setIsProcessing(true);
     setErrorMsg(null);
 
     try {
       const ethereum = (window as any).ethereum;
       if (!ethereum) {
-        setErrorMsg('MetaMask or Web3 wallet not detected. Please install MetaMask or use Fast Demo PIN unlock.');
-        setIsConnectingWallet(false);
+        setErrorMsg('MetaMask or Web3 wallet extension not detected.');
+        setIsProcessing(false);
         return;
       }
 
-      // Request accounts
       const accounts = await ethereum.request({ method: 'eth_requestAccounts' });
       if (!accounts || accounts.length === 0) {
         setErrorMsg('No accounts found in wallet.');
-        setIsConnectingWallet(false);
+        setIsProcessing(false);
         return;
       }
 
@@ -68,7 +260,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onAuthenticated })
           params: [{ chainId: '0x7b7b' }],
         });
       } catch (switchError: any) {
-        // If chain is not added, add it
         if (switchError.code === 4902 || switchError.message?.includes('4902')) {
           await ethereum.request({
             method: 'wallet_addEthereumChain',
@@ -87,10 +278,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onAuthenticated })
 
       const injectedClient = getInjectedWalletClient(userAddress);
       const customProfile = {
-        id: 'metamask',
-        name: 'My Wallet',
+        id: 'injected_wallet',
+        name: 'Browser Wallet',
         handle: '',
-        privateKey: '' as `0x${string}`,
         address: userAddress,
         role: 'consumer' as const,
       };
@@ -98,16 +288,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onAuthenticated })
       onAuthenticated(customProfile, injectedClient, true);
     } catch (err: any) {
       console.warn('Wallet connection error:', err);
-      setErrorMsg(err.message || 'Failed to connect MetaMask. Please unlock MetaMask.');
+      setErrorMsg(err.message || 'Failed to connect wallet.');
     } finally {
-      setIsConnectingWallet(false);
+      setIsProcessing(false);
     }
-  };
-
-  // Select Demo Profile (Alice, Bob, Chai Point)
-  const handleSelectDemoProfile = (p: typeof DEMO_PROFILES[0]) => {
-    const wc = getWalletClientForPrivateKey(p.privateKey);
-    onAuthenticated(p, wc, false);
   };
 
   return (
@@ -117,26 +301,28 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onAuthenticated })
         style={{
           width: '90%',
           maxWidth: '420px',
-          padding: '32px 24px',
+          padding: '28px 22px',
           borderRadius: 'var(--radius-xl)',
           textAlign: 'center',
           background: 'linear-gradient(180deg, #101625 0%, #080c14 100%)',
           border: '1px solid var(--border-highlight)',
           boxShadow: '0 20px 60px rgba(0, 0, 0, 0.8), 0 0 30px rgba(0, 229, 153, 0.15)',
+          maxHeight: '90vh',
+          overflowY: 'auto',
         }}
       >
-        {/* Brand Icon Header */}
-        <div style={{ position: 'relative', width: '72px', height: '72px', margin: '0 auto 16px auto' }}>
+        {/* Header Icon */}
+        <div style={{ position: 'relative', width: '60px', height: '60px', margin: '0 auto 12px auto' }}>
           <div
             style={{
               width: '100%',
               height: '100%',
-              borderRadius: '22px',
+              borderRadius: '18px',
               background: 'linear-gradient(135deg, #f7931a 0%, #00e599 100%)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              fontSize: '34px',
+              fontSize: '28px',
               color: '#07090e',
               boxShadow: 'var(--shadow-glow)',
             }}
@@ -150,132 +336,122 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onAuthenticated })
               right: '-4px',
               background: '#07090e',
               borderRadius: '50%',
-              padding: '4px',
+              padding: '3px',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
             }}
           >
-            <ShieldCheck size={18} color="var(--mezo-green)" />
+            <ShieldCheck size={16} color="var(--mezo-green)" />
           </div>
         </div>
 
         <h2
           style={{
             fontFamily: 'var(--font-display)',
-            fontSize: '24px',
+            fontSize: '22px',
             fontWeight: 800,
-            marginBottom: '4px',
+            marginBottom: '2px',
             letterSpacing: '-0.02em',
           }}
         >
           MezoPay
         </h2>
-        <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '24px' }}>
-          Protected by Mezo Network Security
+        <p style={{ color: 'var(--text-secondary)', fontSize: '12px', marginBottom: '18px' }}>
+          Mezo Testnet (Chain ID 31611)
         </p>
 
-        {/* Tab Switcher */}
-        <div
-          style={{
-            display: 'flex',
-            background: 'rgba(255, 255, 255, 0.05)',
-            padding: '4px',
-            borderRadius: 'var(--radius-md)',
-            marginBottom: '20px',
-          }}
-        >
-          <button
-            onClick={() => setAuthMethod('pin')}
+        {/* Top Navigation Tabs (Unlock / External Wallet) */}
+        {(mode === 'unlock' || mode === 'injected') && (
+          <div
             style={{
-              flex: 1,
-              padding: '8px',
-              borderRadius: 'var(--radius-sm)',
-              border: 'none',
-              background: authMethod === 'pin' ? 'rgba(0, 229, 153, 0.2)' : 'transparent',
-              color: authMethod === 'pin' ? 'var(--mezo-green)' : 'var(--text-muted)',
-              fontWeight: 700,
-              fontSize: '12px',
-              cursor: 'pointer',
               display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '6px',
-              transition: 'all 0.2s ease',
+              background: 'rgba(255, 255, 255, 0.05)',
+              padding: '4px',
+              borderRadius: 'var(--radius-md)',
+              marginBottom: '20px',
             }}
           >
-            <KeyRound size={14} /> Screen PIN
-          </button>
-          <button
-            onClick={() => setAuthMethod('wallet')}
-            style={{
-              flex: 1,
-              padding: '8px',
-              borderRadius: 'var(--radius-sm)',
-              border: 'none',
-              background: authMethod === 'wallet' ? 'rgba(0, 229, 153, 0.2)' : 'transparent',
-              color: authMethod === 'wallet' ? 'var(--mezo-green)' : 'var(--text-muted)',
-              fontWeight: 700,
-              fontSize: '12px',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '6px',
-              transition: 'all 0.2s ease',
-            }}
-          >
-            <Wallet size={14} /> Web3 Wallet
-          </button>
-          <button
-            onClick={() => setAuthMethod('profiles')}
-            style={{
-              flex: 1,
-              padding: '8px',
-              borderRadius: 'var(--radius-sm)',
-              border: 'none',
-              background: authMethod === 'profiles' ? 'rgba(0, 229, 153, 0.2)' : 'transparent',
-              color: authMethod === 'profiles' ? 'var(--mezo-green)' : 'var(--text-muted)',
-              fontWeight: 700,
-              fontSize: '12px',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '6px',
-              transition: 'all 0.2s ease',
-            }}
-          >
-            ⚡ Demo
-          </button>
-        </div>
-
-        {/* PIN Pad View */}
-        {authMethod === 'pin' && (
-          <div>
-            <div style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px' }}>
-              Enter 4-digit PIN to authenticate (Demo: 1234)
-            </div>
-
-            {/* PIN Dots */}
-            <div
+            <button
+              onClick={() => {
+                setMode('unlock');
+                setErrorMsg(null);
+              }}
               style={{
+                flex: 1,
+                padding: '8px',
+                borderRadius: 'var(--radius-sm)',
+                border: 'none',
+                background: mode === 'unlock' ? 'rgba(0, 229, 153, 0.2)' : 'transparent',
+                color: mode === 'unlock' ? 'var(--mezo-green)' : 'var(--text-muted)',
+                fontWeight: 700,
+                fontSize: '12px',
+                cursor: 'pointer',
                 display: 'flex',
+                alignItems: 'center',
                 justifyContent: 'center',
-                gap: '16px',
-                marginBottom: '24px',
+                gap: '6px',
               }}
             >
+              <KeyRound size={14} /> App lock
+            </button>
+            <button
+              onClick={() => {
+                setMode('injected');
+                setErrorMsg(null);
+              }}
+              style={{
+                flex: 1,
+                padding: '8px',
+                borderRadius: 'var(--radius-sm)',
+                border: 'none',
+                background: mode === 'injected' ? 'rgba(0, 229, 153, 0.2)' : 'transparent',
+                color: mode === 'injected' ? 'var(--mezo-green)' : 'var(--text-muted)',
+                fontWeight: 700,
+                fontSize: '12px',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '6px',
+              }}
+            >
+              <Wallet size={14} /> External Wallet
+            </button>
+          </div>
+        )}
+
+        {/* 1. UNLOCK MODE (Keypad) */}
+        {mode === 'unlock' && (
+          <div>
+            <div style={{ fontSize: '13px', color: 'var(--text-primary)', fontWeight: 600, marginBottom: '4px' }}>
+              Enter App lock PIN
+            </div>
+            {storedAddress && (
+              <div
+                style={{
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: '11px',
+                  color: 'var(--text-muted)',
+                  marginBottom: '16px',
+                }}
+              >
+                {storedAddress.slice(0, 8)}...{storedAddress.slice(-6)}
+              </div>
+            )}
+
+            {/* PIN Dots */}
+            <div style={{ display: 'flex', justifyContent: 'center', gap: '14px', marginBottom: '20px' }}>
               {[0, 1, 2, 3].map((idx) => (
                 <div
                   key={idx}
                   style={{
-                    width: '16px',
-                    height: '16px',
+                    width: '14px',
+                    height: '14px',
                     borderRadius: '50%',
-                    background: pin.length > idx ? 'var(--mezo-green)' : 'rgba(255, 255, 255, 0.15)',
-                    border: pin.length > idx ? '2px solid var(--mezo-green)' : '2px solid transparent',
-                    boxShadow: pin.length > idx ? 'var(--shadow-glow)' : 'none',
+                    background: pinInput.length > idx ? 'var(--mezo-green)' : 'rgba(255, 255, 255, 0.15)',
+                    border: pinInput.length > idx ? '2px solid var(--mezo-green)' : '2px solid transparent',
+                    boxShadow: pinInput.length > idx ? 'var(--shadow-glow)' : 'none',
                     transition: 'all 0.15s ease',
                   }}
                 />
@@ -287,8 +463,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onAuthenticated })
               style={{
                 display: 'grid',
                 gridTemplateColumns: 'repeat(3, 1fr)',
-                gap: '12px',
-                maxWidth: '260px',
+                gap: '10px',
+                maxWidth: '240px',
                 margin: '0 auto',
               }}
             >
@@ -296,15 +472,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onAuthenticated })
                 <button
                   key={digit}
                   onClick={() => handlePinDigit(digit)}
+                  disabled={lockoutRemaining > 0 || isProcessing}
                   style={{
-                    height: '52px',
+                    height: '48px',
                     borderRadius: '50%',
                     background: 'rgba(255, 255, 255, 0.05)',
                     border: '1px solid var(--border-subtle)',
                     color: '#fff',
-                    fontSize: '20px',
+                    fontSize: '18px',
                     fontWeight: 700,
-                    cursor: 'pointer',
+                    cursor: lockoutRemaining > 0 ? 'not-allowed' : 'pointer',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
@@ -314,36 +491,144 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onAuthenticated })
                   {digit}
                 </button>
               ))}
+              <div />
               <button
-                onClick={() => {
-                  const profile = DEMO_PROFILES[0];
-                  const wc = getWalletClientForPrivateKey(profile.privateKey);
-                  onAuthenticated(profile, wc, false);
-                }}
-                title="Quick Unlock"
+                onClick={() => handlePinDigit('0')}
+                disabled={lockoutRemaining > 0 || isProcessing}
                 style={{
-                  height: '52px',
+                  height: '48px',
                   borderRadius: '50%',
-                  background: 'rgba(0, 229, 153, 0.1)',
-                  border: '1px solid rgba(0, 229, 153, 0.3)',
-                  color: 'var(--mezo-green)',
-                  cursor: 'pointer',
+                  background: 'rgba(255, 255, 255, 0.05)',
+                  border: '1px solid var(--border-subtle)',
+                  color: '#fff',
+                  fontSize: '18px',
+                  fontWeight: 700,
+                  cursor: lockoutRemaining > 0 ? 'not-allowed' : 'pointer',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                 }}
               >
-                <Fingerprint size={22} />
+                0
               </button>
               <button
-                onClick={() => handlePinDigit('0')}
+                onClick={handleBackspace}
+                disabled={lockoutRemaining > 0 || isProcessing}
                 style={{
-                  height: '52px',
+                  height: '48px',
+                  borderRadius: '50%',
+                  background: 'rgba(255, 255, 255, 0.05)',
+                  border: '1px solid var(--border-subtle)',
+                  color: 'var(--text-muted)',
+                  fontSize: '14px',
+                  fontWeight: 600,
+                  cursor: lockoutRemaining > 0 ? 'not-allowed' : 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                ⌫
+              </button>
+            </div>
+
+            {/* Forgot PIN / Restore Link */}
+            <div style={{ marginTop: '20px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <button
+                onClick={() => {
+                  setMode('restore');
+                  setPinInput('');
+                  setErrorMsg(null);
+                }}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: 'var(--mezo-orange)',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  textDecoration: 'underline',
+                }}
+              >
+                Forgot PIN? Restore with Recovery Phrase
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* 2. CREATE PIN MODE (First Launch) */}
+        {mode === 'create_pin' && (
+          <div>
+            <div style={{ fontSize: '14px', color: 'var(--text-primary)', fontWeight: 700, marginBottom: '6px' }}>
+              {confirmPinStep ? 'Confirm your App lock PIN' : 'Create 4-digit App lock PIN'}
+            </div>
+            <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '16px' }}>
+              {confirmPinStep
+                ? 'Re-enter your 4-digit PIN to confirm.'
+                : 'Encrypts your non-custodial wallet locally on this phone.'}
+            </div>
+
+            {/* PIN Dots */}
+            <div style={{ display: 'flex', justifyContent: 'center', gap: '14px', marginBottom: '20px' }}>
+              {[0, 1, 2, 3].map((idx) => (
+                <div
+                  key={idx}
+                  style={{
+                    width: '14px',
+                    height: '14px',
+                    borderRadius: '50%',
+                    background: pinInput.length > idx ? 'var(--mezo-green)' : 'rgba(255, 255, 255, 0.15)',
+                    border: pinInput.length > idx ? '2px solid var(--mezo-green)' : '2px solid transparent',
+                    boxShadow: pinInput.length > idx ? 'var(--shadow-glow)' : 'none',
+                    transition: 'all 0.15s ease',
+                  }}
+                />
+              ))}
+            </div>
+
+            {/* Keypad */}
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(3, 1fr)',
+                gap: '10px',
+                maxWidth: '240px',
+                margin: '0 auto',
+              }}
+            >
+              {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((digit) => (
+                <button
+                  key={digit}
+                  onClick={() => handlePinDigit(digit)}
+                  disabled={isProcessing}
+                  style={{
+                    height: '48px',
+                    borderRadius: '50%',
+                    background: 'rgba(255, 255, 255, 0.05)',
+                    border: '1px solid var(--border-subtle)',
+                    color: '#fff',
+                    fontSize: '18px',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  {digit}
+                </button>
+              ))}
+              <div />
+              <button
+                onClick={() => handlePinDigit('0')}
+                disabled={isProcessing}
+                style={{
+                  height: '48px',
                   borderRadius: '50%',
                   background: 'rgba(255, 255, 255, 0.05)',
                   border: '1px solid var(--border-subtle)',
                   color: '#fff',
-                  fontSize: '20px',
+                  fontSize: '18px',
                   fontWeight: 700,
                   cursor: 'pointer',
                   display: 'flex',
@@ -355,8 +640,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onAuthenticated })
               </button>
               <button
                 onClick={handleBackspace}
+                disabled={isProcessing}
                 style={{
-                  height: '52px',
+                  height: '48px',
                   borderRadius: '50%',
                   background: 'rgba(255, 255, 255, 0.05)',
                   border: '1px solid var(--border-subtle)',
@@ -373,10 +659,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onAuthenticated })
               </button>
             </div>
 
-            {/* Forgot PIN / Reset with Wallet */}
-            <div style={{ marginTop: '20px', textAlign: 'center' }}>
+            {/* Alternate Option: Restore or External Wallet */}
+            <div style={{ marginTop: '20px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
               <button
-                onClick={() => setAuthMethod('wallet')}
+                onClick={() => {
+                  setMode('restore');
+                  setPinInput('');
+                  setErrorMsg(null);
+                }}
                 style={{
                   background: 'transparent',
                   border: 'none',
@@ -385,100 +675,317 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onAuthenticated })
                   fontWeight: 600,
                   cursor: 'pointer',
                   textDecoration: 'underline',
-                  opacity: 0.9,
                 }}
               >
-                Forgot PIN? Unlock with Web3 Wallet
+                Already have a wallet? Restore with phrase
+              </button>
+              <button
+                onClick={() => {
+                  setMode('injected');
+                  setErrorMsg(null);
+                }}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: 'var(--text-muted)',
+                  fontSize: '11px',
+                  cursor: 'pointer',
+                }}
+              >
+                Or use external browser wallet (MetaMask)
               </button>
             </div>
           </div>
         )}
 
-        {/* Web3 Wallet View */}
-        {authMethod === 'wallet' && (
-          <div>
-            <div style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '20px' }}>
-              Connect your MetaMask or Edge/Chrome injected Web3 wallet to authenticate.
+        {/* 3. SHOW PHRASE MODE */}
+        {mode === 'show_phrase' && generatedWallet && (
+          <div style={{ textAlign: 'left' }}>
+            <div style={{ textAlign: 'center', marginBottom: '14px' }}>
+              <div style={{ fontSize: '15px', color: 'var(--text-primary)', fontWeight: 800 }}>
+                12-Word Recovery Phrase
+              </div>
+              <p style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                Write these 12 words down in order. Never share them with anyone.
+              </p>
+            </div>
+
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(3, 1fr)',
+                gap: '8px',
+                background: 'rgba(0, 0, 0, 0.4)',
+                padding: '12px',
+                borderRadius: 'var(--radius-md)',
+                border: '1px solid var(--border-subtle)',
+                marginBottom: '14px',
+              }}
+            >
+              {generatedWallet.mnemonic.split(' ').map((word, i) => (
+                <div
+                  key={i}
+                  style={{
+                    background: 'rgba(255, 255, 255, 0.04)',
+                    padding: '6px 8px',
+                    borderRadius: 'var(--radius-sm)',
+                    fontSize: '12px',
+                    fontFamily: 'var(--font-mono)',
+                    color: '#fff',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                  }}
+                >
+                  <span style={{ color: 'var(--text-muted)', fontSize: '10px' }}>{i + 1}.</span>
+                  <span style={{ fontWeight: 600 }}>{word}</span>
+                </div>
+              ))}
             </div>
 
             <button
-              onClick={handleConnectInjectedWallet}
-              disabled={isConnectingWallet}
-              className="btn-primary"
+              onClick={() => {
+                navigator.clipboard.writeText(generatedWallet.mnemonic);
+                setCopiedPhrase(true);
+                setTimeout(() => setCopiedPhrase(false), 2000);
+              }}
               style={{
-                marginBottom: '12px',
+                width: '100%',
+                padding: '9px',
+                borderRadius: 'var(--radius-sm)',
+                border: '1px solid var(--border-subtle)',
+                background: 'rgba(255, 255, 255, 0.05)',
+                color: copiedPhrase ? 'var(--mezo-green)' : 'var(--text-primary)',
+                fontSize: '12px',
+                fontWeight: 600,
+                cursor: 'pointer',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                gap: '10px',
+                gap: '6px',
+                marginBottom: '16px',
               }}
             >
-              <Wallet size={18} />
-              <span>{isConnectingWallet ? 'Connecting Wallet...' : 'Connect MetaMask / Web3'}</span>
+              {copiedPhrase ? <Check size={14} /> : <Copy size={14} />}
+              {copiedPhrase ? 'Copied to Clipboard' : 'Copy Recovery Phrase'}
             </button>
 
-            <p style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-              Automatically switches your wallet to Mezo Testnet (Chain ID 31611).
-            </p>
+            <button
+              onClick={() => {
+                setMode('verify_phrase');
+                setErrorMsg(null);
+              }}
+              className="btn btn-primary"
+              style={{ width: '100%', padding: '12px', fontWeight: 800, fontSize: '14px' }}
+            >
+              I Saved My Phrase <ArrowRight size={16} />
+            </button>
           </div>
         )}
 
-        {/* Demo Profiles View */}
-        {authMethod === 'profiles' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            <div style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '4px' }}>
-              Choose a pre-configured profile for instant testing:
+        {/* 4. VERIFY PHRASE MODE */}
+        {mode === 'verify_phrase' && (
+          <div style={{ textAlign: 'left' }}>
+            <div style={{ textAlign: 'center', marginBottom: '14px' }}>
+              <div style={{ fontSize: '15px', color: 'var(--text-primary)', fontWeight: 800 }}>
+                Verify Your Phrase
+              </div>
+              <p style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                Confirm 2 random words from your recovery phrase to ensure your backup is safe.
+              </p>
             </div>
 
-            {DEMO_PROFILES.map((p) => (
-              <div
-                key={p.id}
-                onClick={() => handleSelectDemoProfile(p)}
-                style={{
-                  padding: '12px 16px',
-                  background: 'rgba(255, 255, 255, 0.04)',
-                  border: '1px solid var(--border-subtle)',
-                  borderRadius: 'var(--radius-md)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  cursor: 'pointer',
-                  transition: 'all 0.15s ease',
-                  textAlign: 'left',
-                }}
-              >
-                <div>
-                  <div style={{ fontSize: '14px', fontWeight: 700, color: '#fff' }}>{p.name}</div>
-                  <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                    {p.address.slice(0, 10)}...{p.address.slice(-6)}
-                  </div>
-                </div>
-                <div className="badge badge-chain" style={{ fontSize: '11px' }}>
-                  {p.role}
-                </div>
-              </div>
-            ))}
+            <div style={{ marginBottom: '12px' }}>
+              <label style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
+                Enter Word #{verifyIndices[0]}
+              </label>
+              <input
+                type="text"
+                value={verifyWord1}
+                onChange={(e) => setVerifyWord1(e.target.value.trim().toLowerCase())}
+                placeholder={`Word #${verifyIndices[0]}`}
+                className="input-field"
+                style={{ width: '100%', padding: '10px', fontSize: '13px' }}
+              />
+            </div>
+
+            <div style={{ marginBottom: '18px' }}>
+              <label style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
+                Enter Word #{verifyIndices[1]}
+              </label>
+              <input
+                type="text"
+                value={verifyWord2}
+                onChange={(e) => setVerifyWord2(e.target.value.trim().toLowerCase())}
+                placeholder={`Word #${verifyIndices[1]}`}
+                className="input-field"
+                style={{ width: '100%', padding: '10px', fontSize: '13px' }}
+              />
+            </div>
+
+            <button
+              onClick={handleVerifyWordsAndFinish}
+              disabled={!verifyWord1 || !verifyWord2}
+              className="btn btn-primary"
+              style={{ width: '100%', padding: '12px', fontWeight: 800, fontSize: '14px' }}
+            >
+              Verify & Enter MezoPay <ShieldCheck size={16} />
+            </button>
+
+            <button
+              onClick={() => {
+                setMode('show_phrase');
+                setErrorMsg(null);
+              }}
+              style={{
+                width: '100%',
+                background: 'transparent',
+                border: 'none',
+                color: 'var(--text-muted)',
+                fontSize: '11px',
+                marginTop: '12px',
+                cursor: 'pointer',
+                textAlign: 'center',
+              }}
+            >
+              Back to Phrase View
+            </button>
           </div>
         )}
 
-        {/* Error Notification */}
+        {/* 5. RESTORE WALLET MODE */}
+        {mode === 'restore' && (
+          <div style={{ textAlign: 'left' }}>
+            <div style={{ textAlign: 'center', marginBottom: '14px' }}>
+              <div style={{ fontSize: '15px', color: 'var(--text-primary)', fontWeight: 800 }}>
+                Restore MezoPay Wallet
+              </div>
+              <p style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                Enter your 12-word recovery phrase and choose a new 4-digit App lock PIN.
+              </p>
+            </div>
+
+            <div style={{ marginBottom: '12px' }}>
+              <label style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
+                12-Word Recovery Phrase
+              </label>
+              <textarea
+                value={restoreMnemonicInput}
+                onChange={(e) => setRestoreMnemonicInput(e.target.value)}
+                rows={3}
+                placeholder="apple banana cherry dog elephant fox grape horse igloo jaguar kite lion"
+                className="input-field"
+                style={{ width: '100%', padding: '10px', fontSize: '12px', resize: 'none' }}
+              />
+            </div>
+
+            <div style={{ marginBottom: '18px' }}>
+              <label style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
+                New 4-Digit App lock PIN
+              </label>
+              <input
+                type="password"
+                maxLength={4}
+                value={pinInput}
+                onChange={(e) => setPinInput(e.target.value.replace(/[^0-9]/g, ''))}
+                placeholder="••••"
+                className="input-field"
+                style={{ width: '100%', padding: '10px', fontSize: '16px', letterSpacing: '4px', textAlign: 'center' }}
+              />
+            </div>
+
+            <button
+              onClick={handleRestoreSubmit}
+              disabled={isProcessing || !restoreMnemonicInput || pinInput.length !== 4}
+              className="btn btn-primary"
+              style={{ width: '100%', padding: '12px', fontWeight: 800, fontSize: '14px' }}
+            >
+              {isProcessing ? 'Restoring...' : 'Restore & Set New PIN'} <RotateCcw size={16} />
+            </button>
+
+            <button
+              onClick={() => {
+                if (hasVault()) {
+                  setMode('unlock');
+                } else {
+                  setMode('create_pin');
+                }
+                setPinInput('');
+                setErrorMsg(null);
+              }}
+              style={{
+                width: '100%',
+                background: 'transparent',
+                border: 'none',
+                color: 'var(--text-muted)',
+                fontSize: '11px',
+                marginTop: '12px',
+                cursor: 'pointer',
+                textAlign: 'center',
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        )}
+
+        {/* 6. EXTERNAL WALLET (MetaMask) */}
+        {mode === 'injected' && (
+          <div>
+            <div style={{ padding: '20px 0' }}>
+              <div
+                style={{
+                  width: '56px',
+                  height: '56px',
+                  borderRadius: '16px',
+                  background: 'rgba(247, 147, 26, 0.1)',
+                  border: '1px solid rgba(247, 147, 26, 0.3)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  margin: '0 auto 14px auto',
+                  color: 'var(--mezo-orange)',
+                }}
+              >
+                <Wallet size={28} />
+              </div>
+              <p style={{ fontSize: '13px', color: 'var(--text-primary)', fontWeight: 600, marginBottom: '6px' }}>
+                Connect Browser Web3 Wallet
+              </p>
+              <p style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '20px' }}>
+                Connect MetaMask, Rabby, or any browser extension provider configured for Mezo Testnet.
+              </p>
+
+              <button
+                onClick={handleConnectInjectedWallet}
+                disabled={isProcessing}
+                className="btn btn-primary"
+                style={{ width: '100%', padding: '12px', fontWeight: 800, fontSize: '14px' }}
+              >
+                {isProcessing ? 'Connecting...' : 'Connect MetaMask / Web3'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Error / Warning Alert */}
         {errorMsg && (
           <div
             style={{
-              marginTop: '16px',
-              padding: '10px 14px',
-              background: 'rgba(239, 68, 68, 0.1)',
-              border: '1px solid rgba(239, 68, 68, 0.25)',
-              borderRadius: 'var(--radius-md)',
-              color: '#fca5a5',
-              fontSize: '12px',
+              marginTop: '14px',
+              padding: '10px 12px',
+              borderRadius: 'var(--radius-sm)',
+              background: 'rgba(239, 68, 68, 0.12)',
+              border: '1px solid rgba(239, 68, 68, 0.3)',
+              color: '#ef4444',
+              fontSize: '11px',
               display: 'flex',
               alignItems: 'center',
-              gap: '8px',
-              textAlign: 'left',
+              justifyContent: 'center',
+              gap: '6px',
             }}
           >
-            <AlertCircle size={16} style={{ flexShrink: 0 }} />
+            <AlertCircle size={14} />
             <span>{errorMsg}</span>
           </div>
         )}

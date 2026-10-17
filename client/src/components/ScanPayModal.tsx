@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { X, CheckCircle2, AlertTriangle, QrCode, ShieldCheck, ArrowRight, Zap } from 'lucide-react';
+import { X, CheckCircle2, AlertTriangle, QrCode, ArrowRight, Zap } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { soundbox } from '../services/soundbox';
-import { VERIFIED_MERCHANTS } from '../config/verifiedMerchants';
 import { lookupAddress } from '../services/names';
 import { CameraQRScanner } from './CameraQRScanner';
+import { estimateGasFee } from '../services/payment';
 
 interface ScanPayModalProps {
   isOpen: boolean;
@@ -12,6 +12,7 @@ interface ScanPayModalProps {
   onExecutePayment: (to: `0x${string}`, amount: string, note: string, refData?: any) => Promise<boolean>;
   initialPayload?: string;
   remainingDailySpend: string;
+  allowance: string;
 }
 
 export const ScanPayModal: React.FC<ScanPayModalProps> = ({
@@ -20,13 +21,14 @@ export const ScanPayModal: React.FC<ScanPayModalProps> = ({
   onExecutePayment,
   initialPayload = '',
   remainingDailySpend,
+  allowance,
 }) => {
   const [scanMode, setScanMode] = useState<'camera' | 'manual'>('camera');
   const [payloadInput, setPayloadInput] = useState(initialPayload);
   const [parsedPayment, setParsedPayment] = useState<any | null>(null);
   const [customAmount, setCustomAmount] = useState('10.00');
   const [merchantName, setMerchantName] = useState<string | null>(null);
-  const [isVerified, setIsVerified] = useState(false);
+  const [gasFee, setGasFee] = useState<{ gasPriceGwei: string; estimatedFeeBTC: string; estimatedFeeUSD: string } | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [paymentSuccess, setPaymentSuccess] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -99,9 +101,8 @@ export const ScanPayModal: React.FC<ScanPayModalProps> = ({
         setErrorMsg(`Payment of ${amount} MUSD exceeds your remaining daily limit of ${remainingDailySpend} MUSD.`);
       }
 
-      // Look up merchant or recipient handle
+      // Look up registered handle on-chain
       let displayName = handleParam ? `@${handleParam}` : `${addr.slice(0, 6)}...${addr.slice(-4)}`;
-      let verifiedStatus = false;
 
       try {
         const onChainHandle = await lookupAddress(addr);
@@ -110,17 +111,7 @@ export const ScanPayModal: React.FC<ScanPayModalProps> = ({
         }
       } catch {}
 
-      // Check verified merchants list
-      for (const [key, vm] of Object.entries(VERIFIED_MERCHANTS)) {
-        if (displayName.toLowerCase().includes(key) || vm.handle === key) {
-          displayName = vm.name;
-          verifiedStatus = true;
-          break;
-        }
-      }
-
       setMerchantName(displayName);
-      setIsVerified(verifiedStatus);
 
       setParsedPayment({
         addr,
@@ -132,6 +123,8 @@ export const ScanPayModal: React.FC<ScanPayModalProps> = ({
         isDynamic: Boolean(sig && salt && exp),
         isPermanentQR,
       });
+
+      estimateGasFee().then(setGasFee).catch(() => null);
     } catch {
       setErrorMsg('Failed to parse QR payload. Please ensure it is a valid MezoPay link.');
       setParsedPayment(null);
@@ -256,7 +249,7 @@ export const ScanPayModal: React.FC<ScanPayModalProps> = ({
                 style={{ flex: 1, padding: '8px', fontSize: '12px' }}
                 onClick={() => setScanMode('manual')}
               >
-                📋 Paste Link / Demo
+                📋 Paste Link
               </button>
             </div>
 
@@ -304,32 +297,6 @@ export const ScanPayModal: React.FC<ScanPayModalProps> = ({
               </div>
             )}
 
-            {/* Quick Demo Pay Presets */}
-            <div style={{ display: 'flex', gap: '6px', marginBottom: '20px', flexWrap: 'wrap' }}>
-              <button
-                className="badge"
-                style={{ background: 'rgba(255, 255, 255, 0.05)', border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)', cursor: 'pointer' }}
-                onClick={() => {
-                  const demoUrl = 'https://mezopay.app/pay?chain=31611&addr=0x90F79bf6EB2c4f870365E785982E1f101E93b906&amount=12.50&note=ChaiPoint%20Morning%20Combo&handle=chaipoint';
-                  setPayloadInput(demoUrl);
-                  parsePayload(demoUrl);
-                }}
-              >
-                ☕ Chai Point 12.50 MUSD
-              </button>
-              <button
-                className="badge"
-                style={{ background: 'rgba(255, 255, 255, 0.05)', border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)', cursor: 'pointer' }}
-                onClick={() => {
-                  const demoUrl = 'https://mezopay.app/pay?chain=31611&addr=0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65&amount=25.00&note=Dinner%20Share&handle=bob';
-                  setPayloadInput(demoUrl);
-                  parsePayload(demoUrl);
-                }}
-              >
-                🍕 Bob Share 25.00 MUSD
-              </button>
-            </div>
-
             {errorMsg && (
               <div style={{
                 background: 'rgba(239, 68, 68, 0.12)',
@@ -358,11 +325,6 @@ export const ScanPayModal: React.FC<ScanPayModalProps> = ({
                       <span style={{ fontSize: '18px', fontWeight: 800, color: '#fff' }}>
                         {merchantName}
                       </span>
-                      {isVerified && (
-                        <div className="badge badge-verified" style={{ fontSize: '10px', padding: '2px 6px' }}>
-                          <ShieldCheck size={12} /> Verified
-                        </div>
-                      )}
                     </div>
                   </div>
 
@@ -420,11 +382,46 @@ export const ScanPayModal: React.FC<ScanPayModalProps> = ({
                   fontSize: '12px',
                   display: 'flex',
                   justifyContent: 'space-between',
+                  marginBottom: '8px',
                   color: 'var(--text-muted)'
                 }}>
-                  <span>Security Mode:</span>
+                  <span>Payment Type:</span>
                   <span style={{ color: parsedPayment.isDynamic ? 'var(--mezo-green)' : 'var(--btc-orange)', fontWeight: 600 }}>
-                    {parsedPayment.isDynamic ? '✓ Merchant-Signed Reference (0-Gas)' : 'Permanent QR Direct Transfer'}
+                    {parsedPayment.isDynamic ? 'Signed Request (payReference)' : 'Direct Transfer (payDirect)'}
+                  </span>
+                </div>
+
+                <div style={{
+                  background: 'rgba(255, 255, 255, 0.03)',
+                  borderRadius: 'var(--radius-sm)',
+                  padding: '10px 12px',
+                  fontSize: '12px',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  marginBottom: '8px',
+                  color: 'var(--text-muted)'
+                }}>
+                  <span>Estimated Network Fee:</span>
+                  <span style={{ color: '#fff', fontWeight: 600 }}>
+                    {gasFee ? `${gasFee.estimatedFeeBTC} BTC (${gasFee.estimatedFeeUSD})` : 'Estimating...'}
+                  </span>
+                </div>
+
+                <div style={{
+                  background: 'rgba(255, 255, 255, 0.03)',
+                  borderRadius: 'var(--radius-sm)',
+                  padding: '10px 12px',
+                  fontSize: '12px',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  color: 'var(--text-muted)'
+                }}>
+                  <span>MUSD Allowance:</span>
+                  <span style={{
+                    color: Number(allowance) >= Number(parsedPayment.isPermanentQR ? customAmount : parsedPayment.amount) ? 'var(--mezo-green)' : 'var(--mezo-orange)',
+                    fontWeight: 600
+                  }}>
+                    {Number(allowance) >= Number(parsedPayment.isPermanentQR ? customAmount : parsedPayment.amount) ? 'Approved' : 'Auto-approves on pay'}
                   </span>
                 </div>
               </div>

@@ -14,9 +14,9 @@ export const BillSplitModal: React.FC<BillSplitModalProps> = ({
   onClose,
   onCreateSplit,
 }) => {
-  const [totalAmount, setTotalAmount] = useState('90.00');
+  const [totalAmount, setTotalAmount] = useState('');
   const [participantCount, setParticipantCount] = useState(2); // 2 friends + 1 creator = 3 people
-  const [description, setDescription] = useState('Dinner at Chai Point');
+  const [description, setDescription] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [createdSplitId, setCreatedSplitId] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);

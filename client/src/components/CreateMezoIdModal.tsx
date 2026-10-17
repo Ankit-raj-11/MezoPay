@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { AtSign, CheckCircle2, AlertTriangle, ArrowRight, Sparkles, Loader2, X } from 'lucide-react';
-import { checkNameAvailability, registerNameOnChain } from '../services/names';
+import { checkNameAvailability, registerNameOnChain, normalizeHandle, validateHandle } from '../services/names';
 import { soundbox } from '../services/soundbox';
 import confetti from 'canvas-confetti';
 
@@ -28,17 +28,19 @@ export const CreateMezoIdModal: React.FC<CreateMezoIdModalProps> = ({
 
   // Debounced live check
   useEffect(() => {
-    const clean = handleInput.toLowerCase().trim().replace(/[^a-z0-9_]/g, '');
-    if (clean.length < 3) {
+    const clean = normalizeHandle(handleInput);
+    if (!clean) {
       setIsAvailable(null);
       setSuggestions([]);
-      setErrorMsg(clean.length > 0 ? 'Minimum 3 characters (a-z, 0-9, _)' : null);
+      setErrorMsg(null);
       return;
     }
 
-    if (clean.length > 20) {
+    const validation = validateHandle(clean);
+    if (!validation.valid) {
       setIsAvailable(false);
-      setErrorMsg('Maximum 20 characters');
+      setSuggestions([]);
+      setErrorMsg(validation.error || 'Invalid handle format');
       return;
     }
 
@@ -49,11 +51,23 @@ export const CreateMezoIdModal: React.FC<CreateMezoIdModalProps> = ({
         const available = await checkNameAvailability(clean);
         setIsAvailable(available);
         if (!available) {
-          // Generate available suggestions
-          const s1 = `${clean}_01`;
-          const s2 = `${clean}_pay`;
-          const s3 = `${clean}_btc`;
-          setSuggestions([s1, s2, s3]);
+          // Generate candidate suggestions and check on-chain availability for each
+          const candidates = [
+            `${clean}_01`,
+            `${clean}_pay`,
+            `${clean}_btc`,
+            `${clean}_mezo`,
+            `${clean}_app`,
+          ].filter((c) => c.length <= 20);
+
+          const candidateChecks = await Promise.all(
+            candidates.map(async (cand) => {
+              const isCandAvail = await checkNameAvailability(cand).catch(() => false);
+              return isCandAvail ? cand : null;
+            })
+          );
+          const validSuggestions = candidateChecks.filter((c): c is string => c !== null);
+          setSuggestions(validSuggestions);
         } else {
           setSuggestions([]);
         }
@@ -68,8 +82,13 @@ export const CreateMezoIdModal: React.FC<CreateMezoIdModalProps> = ({
   }, [handleInput]);
 
   const handleRegister = async () => {
-    const clean = handleInput.toLowerCase().trim().replace(/[^a-z0-9_]/g, '');
-    if (!clean || !isAvailable || !walletClient) return;
+    const clean = normalizeHandle(handleInput);
+    const validation = validateHandle(clean);
+    if (!validation.valid) {
+      setErrorMsg(validation.error || 'Invalid handle');
+      return;
+    }
+    if (!isAvailable || !walletClient) return;
 
     setIsRegistering(true);
     setErrorMsg(null);

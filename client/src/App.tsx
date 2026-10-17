@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import { 
   QrCode, 
   Send, 
-  Volume2, 
   Users, 
   RefreshCw, 
   Activity, 
@@ -14,6 +13,7 @@ import {
   Camera,
   Clock,
   ChevronRight,
+  AlertCircle
 } from 'lucide-react';
 import { Navbar } from './components/Navbar';
 import { AuthModal } from './components/AuthModal';
@@ -26,42 +26,32 @@ import { BillSplitModal } from './components/BillSplitModal';
 import { TroveModal } from './components/TroveModal';
 import { SettingsModal } from './components/SettingsModal';
 
-import { DEMO_PROFILES, getWalletClientForPrivateKey } from './services/web3';
 import { fetchAccountState } from './services/payment';
 import type { AccountState } from './services/payment';
 import { fetchTroveMetrics } from './services/trove';
 import type { TroveMetrics } from './services/trove';
 import { lookupAddress } from './services/names';
 import { CONTRACT_ADDRESSES, ERC20_ABI, PAYMENT_CORE_ABI } from './config/contracts';
-import { parseUnits } from 'viem';
-
-interface ActivityItem {
-  id: string;
-  type: 'sent' | 'received';
-  amount: string;
-  target: string;
-  note: string;
-  timestamp: string;
-  txHash?: string;
-}
-
-// Frequent contacts for Google Pay "People" section
-const RECENT_PEOPLE = [
-  { name: 'Chai Point', handle: 'chaipoint@mezo', avatar: '☕', role: 'Merchant', color: 'linear-gradient(135deg, #f7931a, #ea580c)' },
-  { name: 'Bob', handle: 'bob@mezo', avatar: '🍕', role: 'Friend', color: 'linear-gradient(135deg, #3b82f6, #1d4ed8)' },
-  { name: 'Alice', handle: 'alice@mezo', avatar: '👩', role: 'Payer', color: 'linear-gradient(135deg, #00e599, #059669)' },
-  { name: 'David', handle: 'david@mezo', avatar: '👨', role: 'Co-worker', color: 'linear-gradient(135deg, #a855f7, #7e22ce)' },
-];
+import { parseUnits, maxUint256 } from 'viem';
+import { publicClient } from './services/web3';
+import { fetchLiveActivity, type ActivityItem } from './services/history';
 
 export function App() {
-  // Authentication State (Like Google Pay opening screen lock)
+  // App Lock & Authentication State
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
-  const [profile, setProfile] = useState<any>(DEMO_PROFILES[0]);
+  const [userProfile, setUserProfile] = useState<any>({
+    id: 'unconnected',
+    name: 'My Wallet',
+    handle: '',
+    address: '0x0000000000000000000000000000000000000000' as `0x${string}`,
+    role: 'consumer',
+  });
   const [walletClient, setWalletClient] = useState<any>(null);
 
   // Mezo ID State
   const [registeredName, setRegisteredName] = useState<string | null>(null);
   const [showCreateIdModal, setShowCreateIdModal] = useState<boolean>(false);
+  const [isLoadingAccount, setIsLoadingAccount] = useState<boolean>(false);
 
   // Modals & Flows
   const [activeModal, setActiveModal] = useState<
@@ -69,79 +59,63 @@ export function App() {
   >(null);
   const [sendTargetHandle, setSendTargetHandle] = useState<string>('');
 
+  // Real Account State: Starts at real zeroes, never hardcoded numbers
   const [accountState, setAccountState] = useState<AccountState>({
-    btcBalance: '0.052',
-    btcBalanceRaw: 52000000000000000n,
-    musdBalance: '350.00',
-    musdBalanceRaw: 350000000000000000000n,
-    allowance: '500.00',
-    allowanceRaw: 500000000000000000000n,
-    isLimitsConfigured: true,
-    dailyCap: '100.00',
-    perTxCap: '25.00',
-    spentToday: '15.00',
-    effectiveRemainingDailySpend: '85.00',
+    btcBalance: '0.0',
+    btcBalanceRaw: 0n,
+    musdBalance: '0.0',
+    musdBalanceRaw: 0n,
+    allowance: '0.0',
+    allowanceRaw: 0n,
+    isLimitsConfigured: false,
+    dailyCap: '0.0',
+    perTxCap: '0.0',
+    spentToday: '0.0',
+    effectiveRemainingDailySpend: '0.0',
     pendingDailyCap: '0.0',
     pendingPerTxCap: '0.0',
     pendingDailyTimelock: 0,
     pendingPerTxTimelock: 0,
   });
 
+  // Real Trove State: Starts at hasTrove: false
   const [troveMetrics, setTroveMetrics] = useState<TroveMetrics>({
-    hasTrove: true,
-    debtMUSD: '2000.00',
-    debtMUSDRaw: 2000000000000000000000n,
-    collateralBTC: '0.05',
-    collateralBTCRaw: 50000000000000000n,
-    icrPercent: 203,
-    liquidationPriceUSD: '44000.00',
-    btcPriceUSD: '81,309.97',
-    status: 'healthy',
-    statusText: 'Safe (ICR 203% > 150% CCR)',
+    hasTrove: false,
+    debtMUSD: '0.0',
+    debtMUSDRaw: 0n,
+    collateralBTC: '0.0',
+    collateralBTCRaw: 0n,
+    icrPercent: 0,
+    liquidationPriceUSD: '0.0',
+    btcPriceUSD: '0.00',
+    status: 'none',
+    statusText: 'No Active Trove',
   });
 
-  const [activities, setActivities] = useState<ActivityItem[]>([
-    {
-      id: '1',
-      type: 'sent',
-      amount: '15.00',
-      target: 'Chai Point ✓',
-      note: 'Morning Chai Combo',
-      timestamp: '10 mins ago',
-    },
-    {
-      id: '2',
-      type: 'received',
-      amount: '33.33',
-      target: 'bob@mezo',
-      note: 'Dinner Bill Split',
-      timestamp: '1 hour ago',
-    },
-  ]);
+  // Real Activity State: Starts empty
+  const [activities, setActivities] = useState<ActivityItem[]>([]);
+
+  // Real Contacts: Built only from live history, starts empty
+  const [recentContacts, setRecentContacts] = useState<Array<{ handle: string; address: string }>>([]);
 
   // Handle Authentication Success
-  const handleAuthenticated = async (userProfile: any, client: any, isMetaMask: boolean) => {
-    setProfile(userProfile);
-    setWalletClient(client || (userProfile.privateKey ? getWalletClientForPrivateKey(userProfile.privateKey) : null));
+  const handleAuthenticated = async (profile: any, client: any, _isMetaMask: boolean) => {
+    setUserProfile(profile);
+    setWalletClient(client);
     setIsAuthenticated(true);
 
-    // Check if this address already has a registered Mezo ID
-    try {
-      const onChainName = await lookupAddress(userProfile.address);
-      if (onChainName) {
-        setRegisteredName(onChainName);
-        setShowCreateIdModal(false);
-      } else if (userProfile.handle && !isMetaMask) {
-        // Pre-configured demo handle
-        setRegisteredName(userProfile.handle);
-        setShowCreateIdModal(false);
-      } else {
-        // Unregistered user! Compulsory unique Mezo ID onboarding
-        setRegisteredName(null);
-        setShowCreateIdModal(true);
-      }
-    } catch {
-      if (!userProfile.handle) {
+    if (profile.address && profile.address !== '0x0000000000000000000000000000000000000000') {
+      try {
+        const onChainName = await lookupAddress(profile.address);
+        if (onChainName) {
+          setRegisteredName(onChainName);
+          setShowCreateIdModal(false);
+        } else {
+          // Unregistered user: Trigger compulsory handle onboarding
+          setRegisteredName(null);
+          setShowCreateIdModal(true);
+        }
+      } catch {
         setShowCreateIdModal(true);
       }
     }
@@ -149,32 +123,41 @@ export function App() {
 
   // Sync live on-chain data
   const refreshLiveState = async () => {
-    if (!profile?.address) return;
+    if (!userProfile?.address || userProfile.address === '0x0000000000000000000000000000000000000000') return;
+    setIsLoadingAccount(true);
+
     try {
-      const state = await fetchAccountState(profile.address);
-      if (state.musdBalanceRaw > 0n || state.btcBalanceRaw > 0n) {
-        setAccountState(state);
-      }
+      const state = await fetchAccountState(userProfile.address);
+      setAccountState(state);
 
-      const tMetrics = await fetchTroveMetrics(profile.address);
-      if (tMetrics.hasTrove) {
-        setTroveMetrics(tMetrics);
-      }
+      const tMetrics = await fetchTroveMetrics(userProfile.address);
+      setTroveMetrics(tMetrics);
 
-      const name = await lookupAddress(profile.address);
+      const name = await lookupAddress(userProfile.address);
       if (name) {
         setRegisteredName(name);
       }
+
+      // 4. Fetch Real On-Chain Activity & Recent Contacts from PaymentAnnounced event logs
+      try {
+        const { activities: liveActs, contacts: liveContacts } = await fetchLiveActivity(userProfile.address);
+        setActivities(liveActs);
+        setRecentContacts(liveContacts);
+      } catch (err) {
+        console.warn('Activity history log sync warning:', err);
+      }
     } catch (e) {
-      console.warn('Live sync fallback to demo state:', e);
+      console.warn('Live sync error:', e);
+    } finally {
+      setIsLoadingAccount(false);
     }
   };
 
   useEffect(() => {
-    if (isAuthenticated) {
+    if (isAuthenticated && userProfile.address && userProfile.address !== '0x0000000000000000000000000000000000000000') {
       refreshLiveState();
     }
-  }, [profile, isAuthenticated]);
+  }, [userProfile, isAuthenticated]);
 
   // Payment Execution Handler
   const handleExecutePayment = async (
@@ -184,42 +167,51 @@ export function App() {
     refData?: any
   ): Promise<boolean> => {
     try {
-      const client = walletClient || (profile.privateKey ? getWalletClientForPrivateKey(profile.privateKey) : null);
-      if (!client) return false;
+      if (!walletClient) return false;
 
       const amountWei = parseUnits(amount, 18);
-      const account = profile.address || client.account;
+      const account = userProfile.address || walletClient.account;
+
+      // Ensure MUSD Allowance before payment
+      if (accountState.allowanceRaw < amountWei) {
+        const approveTx = await walletClient.writeContract({
+          ...(account ? { account } : {}),
+          address: CONTRACT_ADDRESSES.MUSD,
+          abi: ERC20_ABI,
+          functionName: 'approve',
+          args: [CONTRACT_ADDRESSES.PAYMENT_CORE, maxUint256],
+        });
+        await publicClient.waitForTransactionReceipt({ hash: approveTx });
+        setAccountState((prev) => ({
+          ...prev,
+          allowanceRaw: maxUint256,
+          allowance: 'Unlimited',
+        }));
+      }
+
       let txHash: `0x${string}` | null = null;
 
       if (refData && refData.sig) {
-        // Merchant-signed Reference Payment
-        try {
-          txHash = await client.writeContract({
-            ...(account ? { account } : {}),
-            address: CONTRACT_ADDRESSES.PAYMENT_CORE,
-            abi: PAYMENT_CORE_ABI,
-            functionName: 'payReference',
-            args: [to, amountWei, BigInt(refData.exp), refData.salt, note, refData.sig],
-          });
-        } catch {
-          txHash = '0xsimulated' as `0x${string}`;
-        }
+        // Merchant-signed Reference Payment (payReference)
+        txHash = await walletClient.writeContract({
+          ...(account ? { account } : {}),
+          address: CONTRACT_ADDRESSES.PAYMENT_CORE,
+          abi: PAYMENT_CORE_ABI,
+          functionName: 'payReference',
+          args: [to, amountWei, BigInt(refData.exp), refData.salt, note, refData.sig],
+        });
       } else {
-        // Direct Payment
-        try {
-          txHash = await client.writeContract({
-            ...(account ? { account } : {}),
-            address: CONTRACT_ADDRESSES.PAYMENT_CORE,
-            abi: PAYMENT_CORE_ABI,
-            functionName: 'payDirect',
-            args: [to, amountWei, note],
-          });
-        } catch {
-          txHash = '0xsimulated' as `0x${string}`;
-        }
+        // Direct Payment (payDirect)
+        txHash = await walletClient.writeContract({
+          ...(account ? { account } : {}),
+          address: CONTRACT_ADDRESSES.PAYMENT_CORE,
+          abi: PAYMENT_CORE_ABI,
+          functionName: 'payDirect',
+          args: [to, amountWei, note],
+        });
       }
 
-      // Record Activity
+      // Record Real Activity
       setActivities((prev) => [
         {
           id: Date.now().toString(),
@@ -233,7 +225,7 @@ export function App() {
         ...prev,
       ]);
 
-      // Deduct balance and update spentToday in state
+      // Deduct balance from local live state
       const newMusd = Math.max(0, Number(accountState.musdBalance) - Number(amount)).toFixed(2);
       const newSpent = (Number(accountState.spentToday) + Number(amount)).toFixed(2);
       const newRemaining = Math.max(0, Number(accountState.dailyCap) - Number(newSpent)).toFixed(2);
@@ -244,6 +236,14 @@ export function App() {
         spentToday: newSpent,
         effectiveRemainingDailySpend: newRemaining,
       }));
+
+      // Add to recent contacts
+      setRecentContacts((prev) => {
+        if (!prev.some((c) => c.address.toLowerCase() === to.toLowerCase())) {
+          return [{ handle: '', address: to }, ...prev];
+        }
+        return prev;
+      });
 
       return true;
     } catch (err) {
@@ -264,24 +264,21 @@ export function App() {
     memo: string
   ): Promise<string | null> => {
     try {
-      const client = walletClient || (profile.privateKey ? getWalletClientForPrivateKey(profile.privateKey) : null);
-      if (!client) return null;
+      if (!walletClient) return null;
 
       const totalWei = parseUnits(total, 18);
-      const account = profile.address || client.account;
-      let splitId = `0xsplit_${Date.now()}`;
-      try {
-        const hash = await client.writeContract({
-          ...(account ? { account } : {}),
-          address: CONTRACT_ADDRESSES.PAYMENT_CORE,
-          abi: PAYMENT_CORE_ABI,
-          functionName: 'createSplit',
-          args: [totalWei, participants, memo],
-        });
-        if (hash) splitId = hash;
-      } catch {}
-      return splitId;
-    } catch {
+      const account = userProfile.address || walletClient.account;
+
+      const hash = await walletClient.writeContract({
+        ...(account ? { account } : {}),
+        address: CONTRACT_ADDRESSES.PAYMENT_CORE,
+        abi: PAYMENT_CORE_ABI,
+        functionName: 'createSplit',
+        args: [totalWei, participants, memo],
+      });
+      return hash;
+    } catch (err) {
+      console.error('Failed to create split:', err);
       return null;
     }
   };
@@ -289,32 +286,29 @@ export function App() {
   // Limits Configuration Handler
   const handleConfigureLimits = async (daily: string, perTx: string): Promise<boolean> => {
     try {
-      const client = walletClient || (profile.privateKey ? getWalletClientForPrivateKey(profile.privateKey) : null);
-      if (!client) return false;
+      if (!walletClient) return false;
 
       const dailyWei = parseUnits(daily, 18);
       const perTxWei = parseUnits(perTx, 18);
-      const account = profile.address || client.account;
+      const account = userProfile.address || walletClient.account;
 
-      try {
-        if (!accountState.isLimitsConfigured) {
-          await client.writeContract({
-            ...(account ? { account } : {}),
-            address: CONTRACT_ADDRESSES.PAYMENT_CORE,
-            abi: PAYMENT_CORE_ABI,
-            functionName: 'setInitialSafetyLimits',
-            args: [dailyWei, perTxWei],
-          });
-        } else {
-          await client.writeContract({
-            ...(account ? { account } : {}),
-            address: CONTRACT_ADDRESSES.PAYMENT_CORE,
-            abi: PAYMENT_CORE_ABI,
-            functionName: 'updateSafetyLimits',
-            args: [dailyWei, perTxWei],
-          });
-        }
-      } catch {}
+      if (!accountState.isLimitsConfigured) {
+        await walletClient.writeContract({
+          ...(account ? { account } : {}),
+          address: CONTRACT_ADDRESSES.PAYMENT_CORE,
+          abi: PAYMENT_CORE_ABI,
+          functionName: 'setInitialSafetyLimits',
+          args: [dailyWei, perTxWei],
+        });
+      } else {
+        await walletClient.writeContract({
+          ...(account ? { account } : {}),
+          address: CONTRACT_ADDRESSES.PAYMENT_CORE,
+          abi: PAYMENT_CORE_ABI,
+          functionName: 'updateSafetyLimits',
+          args: [dailyWei, perTxWei],
+        });
+      }
 
       setAccountState((prev) => ({
         ...prev,
@@ -323,7 +317,8 @@ export function App() {
         isLimitsConfigured: true,
       }));
       return true;
-    } catch {
+    } catch (err) {
+      console.error('Configure limits failed:', err);
       return false;
     }
   };
@@ -331,26 +326,23 @@ export function App() {
   // Revoke Allowance Handler
   const handleRevokeAllowance = async (): Promise<boolean> => {
     try {
-      const client = walletClient || (profile.privateKey ? getWalletClientForPrivateKey(profile.privateKey) : null);
-      if (client) {
-        const account = profile.address || client.account;
-        try {
-          await client.writeContract({
-            ...(account ? { account } : {}),
-            address: CONTRACT_ADDRESSES.MUSD,
-            abi: ERC20_ABI,
-            functionName: 'approve',
-            args: [CONTRACT_ADDRESSES.PAYMENT_CORE, 0n],
-          });
-        } catch {}
-      }
+      if (!walletClient) return false;
+      const account = userProfile.address || walletClient.account;
+
+      await walletClient.writeContract({
+        ...(account ? { account } : {}),
+        address: CONTRACT_ADDRESSES.MUSD,
+        abi: ERC20_ABI,
+        functionName: 'approve',
+        args: [CONTRACT_ADDRESSES.PAYMENT_CORE, 0n],
+      });
 
       setAccountState((prev) => ({
         ...prev,
         allowance: '0.00',
         allowanceRaw: 0n,
       }));
-      alert('Access Revoked! MUSD allowance to MezoPaymentCore has been set to 0.');
+      alert('Access Revoked! MUSD allowance to MezoPaymentCore set to 0.');
       return true;
     } catch {
       return false;
@@ -360,20 +352,17 @@ export function App() {
   // Refresh Allowance Handler
   const handleRefreshAllowance = async (): Promise<boolean> => {
     try {
-      const client = walletClient || (profile.privateKey ? getWalletClientForPrivateKey(profile.privateKey) : null);
+      if (!walletClient) return false;
       const allowanceWei = parseUnits('500', 18);
-      if (client) {
-        const account = profile.address || client.account;
-        try {
-          await client.writeContract({
-            ...(account ? { account } : {}),
-            address: CONTRACT_ADDRESSES.MUSD,
-            abi: ERC20_ABI,
-            functionName: 'approve',
-            args: [CONTRACT_ADDRESSES.PAYMENT_CORE, allowanceWei],
-          });
-        } catch {}
-      }
+      const account = userProfile.address || walletClient.account;
+
+      await walletClient.writeContract({
+        ...(account ? { account } : {}),
+        address: CONTRACT_ADDRESSES.MUSD,
+        abi: ERC20_ABI,
+        functionName: 'approve',
+        args: [CONTRACT_ADDRESSES.PAYMENT_CORE, allowanceWei],
+      });
 
       setAccountState((prev) => ({
         ...prev,
@@ -390,11 +379,11 @@ export function App() {
   const allowanceNum = Number(accountState.allowance) || 0;
   const allowancePercent = Math.min(100, Math.max(0, (allowanceNum / 500) * 100));
 
-  const effectiveHandle = registeredName || profile.handle || '';
+  const effectiveHandle = registeredName || '';
 
   return (
     <div className="app-container">
-      {/* 1. AUTHENTICATION GATE (Whenever user opens the app) */}
+      {/* 1. AUTHENTICATION GATE (App Lock PIN) */}
       <AuthModal
         isOpen={!isAuthenticated}
         onAuthenticated={handleAuthenticated}
@@ -403,23 +392,18 @@ export function App() {
       {/* 2. COMPULSORY MEZO ID ONBOARDING MODAL */}
       <CreateMezoIdModal
         isOpen={isAuthenticated && showCreateIdModal}
-        walletClient={walletClient || getWalletClientForPrivateKey(profile.privateKey)}
-        userAddress={profile.address}
+        walletClient={walletClient}
+        userAddress={userProfile.address}
         onSuccess={(claimedHandle) => {
           setRegisteredName(claimedHandle);
           setShowCreateIdModal(false);
-          // Automatically transition to showing their permanent QR code!
           setActiveModal('myqr');
         }}
       />
 
       {/* Top GPay Navbar */}
       <Navbar
-        currentProfile={profile}
-        onSelectProfile={(p) => {
-          setProfile(p);
-          setWalletClient(getWalletClientForPrivateKey(p.privateKey));
-        }}
+        currentProfile={userProfile}
         registeredName={registeredName}
         onOpenSettings={() => setActiveModal('settings')}
         onOpenMyQR={() => setActiveModal('myqr')}
@@ -465,7 +449,7 @@ export function App() {
                 Scan Any QR Code
               </div>
               <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                Pay merchants, friends, or any Mezo ID
+                Pay merchants, friends, or any registered handle
               </div>
             </div>
           </div>
@@ -487,7 +471,7 @@ export function App() {
 
         {/* GOOGLE PAY QUICK ACTION TILES */}
         <div className="actions-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px', marginBottom: '22px' }}>
-          {/* Tile 1: Pay Contacts / @mezo */}
+          {/* Tile 1: Pay Contacts / @name */}
           <div
             className="action-tile"
             onClick={() => {
@@ -498,7 +482,7 @@ export function App() {
             <div className="icon-wrap" style={{ background: 'rgba(0, 229, 153, 0.12)', color: 'var(--mezo-green)' }}>
               <Send size={20} />
             </div>
-            <span>Pay @mezo</span>
+            <span>Pay @name</span>
           </div>
 
           {/* Tile 2: Request Money (Expiring QR) */}
@@ -535,109 +519,102 @@ export function App() {
           </div>
         </div>
 
-        {/* GOOGLE PAY "PEOPLE" / RECENT CONTACTS SECTION */}
-        <div style={{ marginBottom: '24px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-            <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.04em' }}>
-              PEOPLE & STORES
-            </div>
-            <span style={{ fontSize: '11px', color: 'var(--mezo-green)', fontWeight: 600 }}>1-Tap Pay</span>
-          </div>
-
+        {/* WORKSTREAM 3: EMPTY STATE GUIDE (When balances are 0) */}
+        {accountState.btcBalance === '0.0' && accountState.musdBalance === '0.0' && !isLoadingAccount && (
           <div
             style={{
-              display: 'flex',
-              gap: '14px',
-              overflowX: 'auto',
-              paddingBottom: '6px',
-              scrollbarWidth: 'none',
+              padding: '16px',
+              borderRadius: 'var(--radius-lg)',
+              background: 'rgba(247, 147, 26, 0.08)',
+              border: '1px solid rgba(247, 147, 26, 0.25)',
+              marginBottom: '20px',
             }}
           >
-            {RECENT_PEOPLE.map((person) => (
-              <div
-                key={person.handle}
-                onClick={() => {
-                  setSendTargetHandle(person.handle);
-                  setActiveModal('send');
-                }}
-                style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  cursor: 'pointer',
-                  minWidth: '68px',
-                  textAlign: 'center',
-                }}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+              <AlertCircle size={18} color="var(--btc-orange)" />
+              <span style={{ fontSize: '14px', fontWeight: 700, color: '#fff' }}>Get Started with MezoPay:</span>
+            </div>
+            <ol style={{ paddingLeft: '20px', fontSize: '13px', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+              <li><strong>1. Get gas:</strong> Request testnet BTC from the official Mezo faucet.</li>
+              <li><strong>2. Get MUSD:</strong> Borrow against BTC or receive from a friend.</li>
+              <li><strong>3. Set up spending:</strong> Approve allowance and set safety limits.</li>
+            </ol>
+            <div style={{ marginTop: '12px', display: 'flex', gap: '10px' }}>
+              <a
+                href="https://faucet.test.mezo.org"
+                target="_blank"
+                rel="noreferrer"
+                className="btn-primary"
+                style={{ padding: '8px 14px', fontSize: '12px', textDecoration: 'none', width: 'auto' }}
               >
-                <div
-                  style={{
-                    width: '56px',
-                    height: '56px',
-                    borderRadius: '50%',
-                    background: person.color,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontSize: '24px',
-                    boxShadow: 'var(--shadow-sm)',
-                    marginBottom: '6px',
-                    border: '2px solid rgba(255, 255, 255, 0.1)',
-                    transition: 'transform 0.15s ease',
-                  }}
-                  onMouseEnter={(e) => (e.currentTarget.style.transform = 'scale(1.06)')}
-                  onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1)')}
-                >
-                  {person.avatar}
-                </div>
-                <div style={{ fontSize: '12px', fontWeight: 700, color: '#fff', whiteSpace: 'nowrap' }}>
-                  {person.name}
-                </div>
-                <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
-                  {person.handle}
-                </div>
-              </div>
-            ))}
-
-            {/* Merchant Soundbox POS Tile */}
-            <div
-              onClick={() => setActiveModal('pos')}
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                cursor: 'pointer',
-                minWidth: '68px',
-                textAlign: 'center',
-              }}
-            >
-              <div
-                style={{
-                  width: '56px',
-                  height: '56px',
-                  borderRadius: '50%',
-                  background: 'rgba(255, 255, 255, 0.05)',
-                  border: '1.5px dashed var(--btc-orange)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: '20px',
-                  color: 'var(--btc-orange)',
-                  marginBottom: '6px',
-                }}
+                Official Mezo Faucet <ExternalLink size={12} />
+              </a>
+              <button
+                onClick={refreshLiveState}
+                className="btn-secondary"
+                style={{ padding: '8px 14px', fontSize: '12px' }}
               >
-                <Volume2 size={24} />
-              </div>
-              <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--btc-orange)' }}>
-                Soundbox
-              </div>
-              <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
-                Merchant POS
-              </div>
+                <RefreshCw size={12} /> Check Balances
+              </button>
             </div>
           </div>
-        </div>
+        )}
 
-        {/* HERO CARD: SPENDABLE BALANCE & COLLATERAL */}
+        {/* CONTACTS / RECENT PEOPLE: Honest empty state */}
+        {recentContacts.length > 0 && (
+          <div style={{ marginBottom: '24px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.04em' }}>
+                RECENT CONTACTS
+              </div>
+              <span style={{ fontSize: '11px', color: 'var(--mezo-green)', fontWeight: 600 }}>1-Tap Pay</span>
+            </div>
+
+            <div style={{ display: 'flex', gap: '14px', overflowX: 'auto', paddingBottom: '6px' }}>
+              {recentContacts.map((c) => (
+                <div
+                  key={c.address}
+                  onClick={() => {
+                    setSendTargetHandle(c.handle || c.address);
+                    setActiveModal('send');
+                  }}
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    cursor: 'pointer',
+                    minWidth: '64px',
+                    textAlign: 'center',
+                  }}
+                >
+                  <div
+                    style={{
+                      width: '52px',
+                      height: '52px',
+                      borderRadius: '50%',
+                      background: 'rgba(255, 255, 255, 0.08)',
+                      border: '1px solid var(--border-subtle)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: '16px',
+                      color: 'var(--mezo-green)',
+                      fontWeight: 700,
+                      marginBottom: '6px',
+                    }}
+                  >
+                    {c.handle ? c.handle.charAt(0).toUpperCase() : '0x'}
+                  </div>
+                  <div style={{ fontSize: '11px', fontWeight: 600, color: '#fff' }}>
+                    {c.handle ? `@${c.handle}` : `${c.address.slice(0, 4)}...`}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* HERO CARD: SPENDABLE BALANCE & COLLATERAL (100% Real On-Chain) */}
         <div className="glass-card" style={{ marginBottom: '16px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
             <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.05em' }}>
@@ -658,7 +635,7 @@ export function App() {
             Bitcoin-backed dollar on Mezo Network
           </div>
 
-          {/* Trove Health Pill */}
+          {/* Trove Health Pill (Honest On-Chain Status) */}
           <div
             onClick={() => setActiveModal('trove')}
             style={{
@@ -675,10 +652,10 @@ export function App() {
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <Activity size={16} color="var(--mezo-green)" />
+              <Activity size={16} color={troveMetrics.hasTrove ? 'var(--mezo-green)' : 'var(--text-muted)'} />
               <span style={{ fontSize: '12px', fontWeight: 600 }}>Trove Collateral Health:</span>
-              <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--mezo-green)' }}>
-                {troveMetrics.icrPercent}% ICR
+              <span style={{ fontSize: '12px', fontWeight: 700, color: troveMetrics.hasTrove ? 'var(--mezo-green)' : 'var(--text-muted)' }}>
+                {troveMetrics.hasTrove ? `${troveMetrics.icrPercent}% ICR` : 'No Active Trove'}
               </span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: 'var(--text-muted)' }}>
@@ -694,8 +671,10 @@ export function App() {
             <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>
               Daily Spending Remaining:
             </span>
-            <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--mezo-green)' }}>
-              {accountState.effectiveRemainingDailySpend} / {accountState.dailyCap} MUSD
+            <span style={{ fontSize: '13px', fontWeight: 700, color: accountState.isLimitsConfigured ? 'var(--mezo-green)' : 'var(--text-muted)' }}>
+              {accountState.isLimitsConfigured
+                ? `${accountState.effectiveRemainingDailySpend} / ${accountState.dailyCap} MUSD`
+                : 'Not Configured'}
             </span>
           </div>
 
@@ -729,82 +708,95 @@ export function App() {
           </div>
         </div>
 
-        {/* RECENT ACTIVITY / TRANSACTIONS FEED */}
+        {/* RECENT ACTIVITY: Honest empty state */}
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
             <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '17px', fontWeight: 700 }}>
               Recent Transactions
             </h3>
-            <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Settled on Mezo</span>
+            <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Mezo Testnet</span>
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            {activities.map((item) => (
-              <div
-                key={item.id}
-                className="glass-card"
-                style={{
-                  padding: '12px 16px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                  <div
-                    style={{
-                      width: '38px',
-                      height: '38px',
-                      borderRadius: '12px',
-                      background: item.type === 'sent' ? 'rgba(239, 68, 68, 0.12)' : 'rgba(0, 229, 153, 0.12)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      color: item.type === 'sent' ? '#f87171' : 'var(--mezo-green)',
-                    }}
-                  >
-                    {item.type === 'sent' ? <ArrowUpRight size={18} /> : <ArrowDownLeft size={18} />}
-                  </div>
-                  <div>
-                    <div style={{ fontSize: '14px', fontWeight: 600, color: '#fff' }}>
-                      {item.target}
+          {activities.length === 0 ? (
+            <div
+              className="glass-card"
+              style={{
+                padding: '24px',
+                textAlign: 'center',
+                color: 'var(--text-muted)',
+                fontSize: '13px',
+              }}
+            >
+              No payments yet. Scan a QR code or pay a registered name to get started.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {activities.map((item) => (
+                <div
+                  key={item.id}
+                  className="glass-card"
+                  style={{
+                    padding: '12px 16px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <div
+                      style={{
+                        width: '38px',
+                        height: '38px',
+                        borderRadius: '12px',
+                        background: item.type === 'sent' ? 'rgba(239, 68, 68, 0.12)' : 'rgba(0, 229, 153, 0.12)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        color: item.type === 'sent' ? '#f87171' : 'var(--mezo-green)',
+                      }}
+                    >
+                      {item.type === 'sent' ? <ArrowUpRight size={18} /> : <ArrowDownLeft size={18} />}
                     </div>
-                    <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                      {item.note} • {item.timestamp}
+                    <div>
+                      <div style={{ fontSize: '14px', fontWeight: 600, color: '#fff' }}>
+                        {item.target}
+                      </div>
+                      <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                        {item.note} • {item.timestamp}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={{ textAlign: 'right' }}>
+                    <div
+                      style={{
+                        fontSize: '15px',
+                        fontWeight: 700,
+                        color: item.type === 'sent' ? '#fff' : 'var(--mezo-green)',
+                      }}
+                    >
+                      {item.type === 'sent' ? '-' : '+'}{item.amount} MUSD
+                    </div>
+                    <div style={{ fontSize: '10px', color: 'var(--mezo-green)', fontWeight: 600 }}>
+                      Settled on Mezo
                     </div>
                   </div>
                 </div>
-
-                <div style={{ textAlign: 'right' }}>
-                  <div
-                    style={{
-                      fontSize: '15px',
-                      fontWeight: 700,
-                      color: item.type === 'sent' ? '#fff' : 'var(--mezo-green)',
-                    }}
-                  >
-                    {item.type === 'sent' ? '-' : '+'}{item.amount} MUSD
-                  </div>
-                  <div style={{ fontSize: '10px', color: 'var(--mezo-green)', fontWeight: 600 }}>
-                    Settled on Mezo
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       </main>
 
       {/* MODALS */}
-      {/* 1. Camera & Code QR Scanner */}
       <ScanPayModal
         isOpen={activeModal === 'scan'}
         onClose={() => setActiveModal(null)}
         onExecutePayment={handleExecutePayment}
         remainingDailySpend={accountState.effectiveRemainingDailySpend}
+        allowance={accountState.allowance}
       />
 
-      {/* 2. Direct Send by @mezo Handle */}
       <SendNameModal
         isOpen={activeModal === 'send'}
         onClose={() => {
@@ -816,35 +808,31 @@ export function App() {
         initialHandle={sendTargetHandle}
       />
 
-      {/* 3. My Permanent QR Code Modal */}
       <MyQRModal
         isOpen={activeModal === 'myqr'}
         onClose={() => setActiveModal(null)}
-        userAddress={profile.address}
+        userAddress={userProfile.address}
         userHandle={effectiveHandle}
-        walletClient={walletClient || getWalletClientForPrivateKey(profile.privateKey)}
+        walletClient={walletClient}
         defaultTab="permanent"
       />
 
-      {/* 4. Request Money (Dynamic QR with Expiry Countdown) */}
       <MyQRModal
         isOpen={activeModal === 'requestqr'}
         onClose={() => setActiveModal(null)}
-        userAddress={profile.address}
+        userAddress={userProfile.address}
         userHandle={effectiveHandle}
-        walletClient={walletClient || getWalletClientForPrivateKey(profile.privateKey)}
+        walletClient={walletClient}
         defaultTab="request"
       />
 
-      {/* 5. Soundbox POS Terminal */}
       <SoundboxPOSModal
         isOpen={activeModal === 'pos'}
         onClose={() => setActiveModal(null)}
-        merchantWalletClient={walletClient || getWalletClientForPrivateKey(profile.privateKey)}
-        merchantName={registeredName ? `@${registeredName}` : profile.name}
+        merchantWalletClient={walletClient}
+        merchantName={registeredName ? `@${registeredName}` : 'Merchant'}
       />
 
-      {/* 6. Bill Split Modal */}
       <BillSplitModal
         isOpen={activeModal === 'split'}
         onClose={() => setActiveModal(null)}
@@ -852,14 +840,12 @@ export function App() {
         onPaySplitShare={async () => true}
       />
 
-      {/* 7. Trove Health Modal */}
       <TroveModal
         isOpen={activeModal === 'trove'}
         onClose={() => setActiveModal(null)}
         metrics={troveMetrics}
       />
 
-      {/* 8. Limits & Revocation Settings Modal */}
       <SettingsModal
         isOpen={activeModal === 'settings'}
         onClose={() => setActiveModal(null)}

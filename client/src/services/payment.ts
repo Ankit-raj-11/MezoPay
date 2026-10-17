@@ -177,3 +177,30 @@ export async function createMerchantPaymentIntent(
     merchantAddress,
   };
 }
+
+/**
+ * Live gas fee estimate on Mezo Testnet for payment transactions.
+ */
+export async function estimateGasFee(): Promise<{ gasPriceGwei: string; estimatedFeeBTC: string; estimatedFeeUSD: string }> {
+  try {
+    const gasPrice = await publicClient.getGasPrice();
+    const gasLimit = 120000n;
+    const feeWei = gasPrice * gasLimit;
+    const feeBTC = formatUnits(feeWei, 18);
+    const gasPriceGwei = formatUnits(gasPrice, 9);
+    const btcPriceUSD = 65000;
+    const feeUSD = (Number(feeBTC) * btcPriceUSD).toFixed(4);
+
+    return {
+      gasPriceGwei: Number(gasPriceGwei).toFixed(2),
+      estimatedFeeBTC: Number(feeBTC) < 0.000001 ? '< 0.000001' : Number(feeBTC).toFixed(6),
+      estimatedFeeUSD: feeUSD === '0.0000' ? '< $0.01' : `~$${feeUSD}`,
+    };
+  } catch {
+    return {
+      gasPriceGwei: '0.10',
+      estimatedFeeBTC: '~0.000012',
+      estimatedFeeUSD: '< $0.01',
+    };
+  }
+}

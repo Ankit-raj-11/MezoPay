@@ -113,7 +113,7 @@ export const MyQRModal: React.FC<MyQRModalProps> = ({
           setDynamicQrUrl(qr);
           return;
         } catch {
-          // Fallback to URL parameters if signing is rejected/unavailable
+          // Use standard URL parameters if off-chain signature is unavailable
         }
       }
 

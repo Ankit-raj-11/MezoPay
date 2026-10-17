@@ -213,31 +213,6 @@ export const SendNameModal: React.FC<SendNameModalProps> = ({
               )}
             </div>
 
-            {/* Quick Demo Handle Tags */}
-            <div style={{ display: 'flex', gap: '6px', marginBottom: '16px' }}>
-              <button
-                className="badge badge-chain"
-                style={{ cursor: 'pointer', padding: '4px 8px' }}
-                onClick={() => handleSearch('chaipoint')}
-              >
-                @chaipoint
-              </button>
-              <button
-                className="badge badge-chain"
-                style={{ cursor: 'pointer', padding: '4px 8px' }}
-                onClick={() => handleSearch('bob')}
-              >
-                @bob
-              </button>
-              <button
-                className="badge badge-chain"
-                style={{ cursor: 'pointer', padding: '4px 8px' }}
-                onClick={() => handleSearch('alice')}
-              >
-                @alice
-              </button>
-            </div>
-
             {/* Amount & Note Inputs */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '8px', marginBottom: '16px' }}>
               <div>

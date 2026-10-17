@@ -308,6 +308,7 @@ contract MezoPaymentCore is ReentrancyGuard {
     function payDirect(address to, uint256 amount, string calldata note) external nonReentrant {
         require(to != address(0), "Invalid recipient");
         require(msg.sender != to, "Cannot pay oneself");
+        require(amount > 0, "Payment amount must be greater than zero");
         require(bytes(note).length <= 140, "Note exceeds 140 characters");
         require(musdToken.allowance(msg.sender, address(this)) >= amount, "Insufficient MUSD allowance");
 
@@ -340,6 +341,7 @@ contract MezoPaymentCore is ReentrancyGuard {
     ) external nonReentrant {
         require(merchant != address(0), "Invalid merchant");
         require(msg.sender != merchant, "Cannot pay oneself");
+        require(amount > 0, "Payment amount must be greater than zero");
         require(block.timestamp <= expiry, "Reference expired");
         require(bytes(note).length <= 140, "Note exceeds 140 characters");
 
@@ -414,6 +416,7 @@ contract MezoPaymentCore is ReentrancyGuard {
         require(split.paidCount < split.participantCount, "Split already fully settled");
 
         uint256 share = split.shareAmount;
+        require(share > 0, "Payment amount must be greater than zero");
         require(musdToken.allowance(msg.sender, address(this)) >= share, "Insufficient MUSD allowance");
 
         _enforceLimits(msg.sender, share);

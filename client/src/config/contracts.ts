@@ -122,7 +122,7 @@ export const PRICE_FEED_ABI = [
     name: 'fetchPrice',
     inputs: [],
     outputs: [{ name: '', type: 'uint256' }],
-    stateMutability: 'nonpayable',
+    stateMutability: 'view',
   },
   {
     type: 'function',

@@ -242,6 +242,15 @@ contract MezoPaymentCoreTest is Test {
         core.payDirect(address(0), 10 * 1e18, "Coffee");
     }
 
+    function test_RevertWhen_PayDirect_ZeroAmount() public {
+        vm.prank(alice);
+        core.setInitialSafetyLimits(100 * 1e18, 25 * 1e18);
+
+        vm.prank(alice);
+        vm.expectRevert("Payment amount must be greater than zero");
+        core.payDirect(bob, 0, "Zero amount");
+    }
+
     function test_RevertWhen_PayDirect_ExceedsPerTxCap() public {
         vm.prank(alice);
         core.setInitialSafetyLimits(100 * 1e18, 25 * 1e18);
@@ -341,6 +350,19 @@ contract MezoPaymentCoreTest is Test {
 
         assertTrue(core.isReferencePaid(ref));
         assertEq(musd.balanceOf(merchant), amount);
+    }
+
+    function test_RevertWhen_PayReference_ZeroAmount() public {
+        vm.prank(alice);
+        core.setInitialSafetyLimits(100 * 1e18, 25 * 1e18);
+
+        uint64 expiry = uint64(block.timestamp + 30 minutes);
+        bytes32 salt = keccak256("order_zero");
+        bytes memory sig = _signMerchantReference(merchantPk, merchant, 0, expiry, salt);
+
+        vm.prank(alice);
+        vm.expectRevert("Payment amount must be greater than zero");
+        core.payReference(merchant, 0, expiry, salt, "Zero MUSD", sig);
     }
 
     function test_RevertWhen_PayReference_TamperedAmount() public {

@@ -17,19 +17,27 @@ export interface TroveMetrics {
 
 export async function fetchTroveMetrics(userAddress: `0x${string}`): Promise<TroveMetrics> {
   try {
-    // 1. Fetch live BTC Oracle Price from PriceFeed
-    let btcPriceRaw = 81300n * 10n ** 18n; // fallback ~81.3k
+    // 1. Fetch live BTC Oracle Price from PriceFeed (fetchPrice on Mezo Testnet)
+    let btcPriceRaw = 0n;
     try {
       btcPriceRaw = await publicClient.readContract({
         address: CONTRACT_ADDRESSES.PRICE_FEED,
         abi: PRICE_FEED_ABI,
-        functionName: 'lastGoodPrice',
+        functionName: 'fetchPrice',
       }) as bigint;
     } catch {
-      // If lastGoodPrice fails, price remains fallback
+      try {
+        btcPriceRaw = await publicClient.readContract({
+          address: CONTRACT_ADDRESSES.PRICE_FEED,
+          abi: PRICE_FEED_ABI,
+          functionName: 'lastGoodPrice',
+        }) as bigint;
+      } catch (err) {
+        console.warn('Oracle PriceFeed read failed:', err);
+      }
     }
 
-    const btcPriceUSD = Number(formatUnits(btcPriceRaw, 18)).toFixed(2);
+    const btcPriceUSD = btcPriceRaw > 0n ? Number(formatUnits(btcPriceRaw, 18)).toFixed(2) : '0.00';
 
     // 2. Fetch Trove Debt
     const debtRaw = await publicClient.readContract({

@@ -19,8 +19,8 @@ export const SoundboxPOSModal: React.FC<SoundboxPOSModalProps> = ({
   merchantWalletClient,
   merchantName,
 }) => {
-  const [amount, setAmount] = useState('15.00');
-  const [note, setNote] = useState('Chai & Snacks');
+  const [amount, setAmount] = useState('');
+  const [note, setNote] = useState('');
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [paymentUrl, setPaymentUrl] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);

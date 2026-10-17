@@ -1,10 +1,8 @@
 import React, { useState } from 'react';
-import { ShieldCheck, ChevronDown, Radio, QrCode, Lock, Settings } from 'lucide-react';
-import { DEMO_PROFILES } from '../services/web3';
+import { Radio, QrCode, Lock, Settings, Copy, Check } from 'lucide-react';
 
 interface NavbarProps {
   currentProfile: any;
-  onSelectProfile: (profile: any) => void;
   registeredName: string | null;
   onOpenSettings: () => void;
   onOpenMyQR: () => void;
@@ -13,19 +11,32 @@ interface NavbarProps {
 
 export const Navbar: React.FC<NavbarProps> = ({
   currentProfile,
-  onSelectProfile,
   registeredName,
   onOpenSettings,
   onOpenMyQR,
   onLockApp,
 }) => {
   const [showDropdown, setShowDropdown] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const cleanHandle = registeredName
     ? registeredName.replace('@mezo', '').replace('@', '').toLowerCase().trim()
-    : (currentProfile.handle || '').replace('@mezo', '').replace('@', '').toLowerCase().trim();
+    : '';
 
-  const displayHandle = cleanHandle ? `${cleanHandle}@mezo` : `${currentProfile.address.slice(0, 6)}...${currentProfile.address.slice(-4)}`;
+  const address = currentProfile?.address || '';
+  const displayHandle = cleanHandle
+    ? `@${cleanHandle}`
+    : address
+    ? `${address.slice(0, 6)}...${address.slice(-4)}`
+    : 'Not Connected';
+
+  const handleCopyAddress = () => {
+    if (address) {
+      navigator.clipboard.writeText(address);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
 
   return (
     <header
@@ -139,7 +150,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 width: '20px',
                 height: '20px',
                 borderRadius: '50%',
-                background: currentProfile.role === 'merchant' ? 'var(--btc-orange)' : 'var(--mezo-green)',
+                background: 'var(--mezo-green)',
                 color: '#07090e',
                 display: 'flex',
                 alignItems: 'center',
@@ -153,7 +164,6 @@ export const Navbar: React.FC<NavbarProps> = ({
             <span style={{ maxWidth: '100px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {displayHandle}
             </span>
-            <ChevronDown size={12} color="var(--text-muted)" />
           </button>
 
           {showDropdown && (
@@ -162,55 +172,42 @@ export const Navbar: React.FC<NavbarProps> = ({
                 position: 'absolute',
                 top: '125%',
                 right: 0,
-                width: '250px',
+                width: '240px',
                 background: 'var(--bg-surface-elevated)',
                 border: '1px solid var(--border-highlight)',
                 borderRadius: 'var(--radius-md)',
                 boxShadow: 'var(--shadow-lg)',
-                padding: '6px',
+                padding: '10px',
                 zIndex: 100,
               }}
             >
-              <div style={{ padding: '6px 10px', fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600 }}>
-                SWITCH DEMO WALLET
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 700, marginBottom: '6px' }}>
+                CONNECTED ACCOUNT
               </div>
 
-              {DEMO_PROFILES.map((p) => (
-                <div
-                  key={p.id}
-                  onClick={() => {
-                    onSelectProfile(p);
-                    setShowDropdown(false);
-                  }}
-                  style={{
-                    padding: '8px 10px',
-                    borderRadius: 'var(--radius-sm)',
-                    background: currentProfile.id === p.id ? 'rgba(0, 229, 153, 0.12)' : 'transparent',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    fontSize: '13px',
-                  }}
-                >
-                  <div>
-                    <div
-                      style={{
-                        fontWeight: 600,
-                        color: currentProfile.id === p.id ? 'var(--mezo-green)' : 'var(--text-primary)',
-                      }}
-                    >
-                      {p.name}
-                    </div>
-                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-                      {p.address.slice(0, 6)}...{p.address.slice(-4)}
-                    </div>
-                  </div>
-                  {currentProfile.id === p.id && <ShieldCheck size={16} color="var(--mezo-green)" />}
-                </div>
-              ))}
-
-              <div style={{ borderTop: '1px solid var(--border-subtle)', margin: '6px 0' }} />
+              <div
+                style={{
+                  padding: '8px 10px',
+                  borderRadius: 'var(--radius-sm)',
+                  background: 'rgba(255, 255, 255, 0.04)',
+                  fontSize: '12px',
+                  marginBottom: '10px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  fontFamily: 'var(--font-mono)',
+                }}
+              >
+                <span>{address ? `${address.slice(0, 8)}...${address.slice(-6)}` : 'None'}</span>
+                {address && (
+                  <button
+                    onClick={handleCopyAddress}
+                    style={{ background: 'transparent', border: 'none', color: 'var(--mezo-green)', cursor: 'pointer' }}
+                  >
+                    {copied ? <Check size={13} /> : <Copy size={13} />}
+                  </button>
+                )}
+              </div>
 
               <div
                 onClick={() => {
@@ -221,12 +218,12 @@ export const Navbar: React.FC<NavbarProps> = ({
                   padding: '8px 10px',
                   borderRadius: 'var(--radius-sm)',
                   cursor: 'pointer',
-                  fontSize: '12px',
+                  fontSize: '13px',
                   color: 'var(--text-secondary)',
                   fontWeight: 600,
                   display: 'flex',
                   alignItems: 'center',
-                  gap: '6px',
+                  gap: '8px',
                 }}
               >
                 <Settings size={14} />
@@ -242,12 +239,12 @@ export const Navbar: React.FC<NavbarProps> = ({
                   padding: '8px 10px',
                   borderRadius: 'var(--radius-sm)',
                   cursor: 'pointer',
-                  fontSize: '12px',
+                  fontSize: '13px',
                   color: 'var(--color-danger)',
                   fontWeight: 600,
                   display: 'flex',
                   alignItems: 'center',
-                  gap: '6px',
+                  gap: '8px',
                 }}
               >
                 <Lock size={14} />
