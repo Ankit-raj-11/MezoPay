@@ -85,7 +85,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onAuthenticated })
         }
       }
 
-      const injectedClient = getInjectedWalletClient();
+      const injectedClient = getInjectedWalletClient(userAddress);
       const customProfile = {
         id: 'metamask',
         name: 'My Wallet',
@@ -370,6 +370,25 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onAuthenticated })
                 }}
               >
                 ⌫
+              </button>
+            </div>
+
+            {/* Forgot PIN / Reset with Wallet */}
+            <div style={{ marginTop: '20px', textAlign: 'center' }}>
+              <button
+                onClick={() => setAuthMethod('wallet')}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: 'var(--mezo-green)',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  textDecoration: 'underline',
+                  opacity: 0.9,
+                }}
+              >
+                Forgot PIN? Unlock with Web3 Wallet
               </button>
             </div>
           </div>

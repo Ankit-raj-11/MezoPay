@@ -57,10 +57,16 @@ export async function checkNameAvailability(name: string): Promise<boolean> {
   }
 }
 
-export async function registerNameOnChain(name: string, walletClient: any): Promise<`0x${string}` | null> {
+export async function registerNameOnChain(
+  name: string, 
+  walletClient: any, 
+  userAddress?: `0x${string}`
+): Promise<`0x${string}` | null> {
   const cleanName = name.replace('@mezo', '').toLowerCase().trim();
   try {
+    const account = userAddress || walletClient.account;
     const txHash = await walletClient.writeContract({
+      ...(account ? { account } : {}),
       address: CONTRACT_ADDRESSES.NAME_REGISTRY,
       abi: NAME_REGISTRY_ABI,
       functionName: 'registerName',

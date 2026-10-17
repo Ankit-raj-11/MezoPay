@@ -45,9 +45,10 @@ export function getWalletClientForPrivateKey(privateKey: `0x${string}`) {
   });
 }
 
-export function getInjectedWalletClient() {
+export function getInjectedWalletClient(account?: `0x${string}`) {
   if (typeof window !== 'undefined' && (window as any).ethereum) {
     return createWalletClient({
+      ...(account ? { account } : {}),
       chain: mezoTestnet,
       transport: custom((window as any).ethereum),
     });

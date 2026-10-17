@@ -75,7 +75,7 @@ export const CreateMezoIdModal: React.FC<CreateMezoIdModalProps> = ({
     setErrorMsg(null);
 
     try {
-      await registerNameOnChain(clean, walletClient);
+      await registerNameOnChain(clean, walletClient, userAddress);
       soundbox.playChime();
       confetti({
         particleCount: 100,

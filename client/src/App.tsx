@@ -188,12 +188,14 @@ export function App() {
       if (!client) return false;
 
       const amountWei = parseUnits(amount, 18);
+      const account = profile.address || client.account;
       let txHash: `0x${string}` | null = null;
 
       if (refData && refData.sig) {
         // Merchant-signed Reference Payment
         try {
           txHash = await client.writeContract({
+            ...(account ? { account } : {}),
             address: CONTRACT_ADDRESSES.PAYMENT_CORE,
             abi: PAYMENT_CORE_ABI,
             functionName: 'payReference',
@@ -206,6 +208,7 @@ export function App() {
         // Direct Payment
         try {
           txHash = await client.writeContract({
+            ...(account ? { account } : {}),
             address: CONTRACT_ADDRESSES.PAYMENT_CORE,
             abi: PAYMENT_CORE_ABI,
             functionName: 'payDirect',
@@ -265,9 +268,11 @@ export function App() {
       if (!client) return null;
 
       const totalWei = parseUnits(total, 18);
+      const account = profile.address || client.account;
       let splitId = `0xsplit_${Date.now()}`;
       try {
         const hash = await client.writeContract({
+          ...(account ? { account } : {}),
           address: CONTRACT_ADDRESSES.PAYMENT_CORE,
           abi: PAYMENT_CORE_ABI,
           functionName: 'createSplit',
@@ -289,10 +294,12 @@ export function App() {
 
       const dailyWei = parseUnits(daily, 18);
       const perTxWei = parseUnits(perTx, 18);
+      const account = profile.address || client.account;
 
       try {
         if (!accountState.isLimitsConfigured) {
           await client.writeContract({
+            ...(account ? { account } : {}),
             address: CONTRACT_ADDRESSES.PAYMENT_CORE,
             abi: PAYMENT_CORE_ABI,
             functionName: 'setInitialSafetyLimits',
@@ -300,6 +307,7 @@ export function App() {
           });
         } else {
           await client.writeContract({
+            ...(account ? { account } : {}),
             address: CONTRACT_ADDRESSES.PAYMENT_CORE,
             abi: PAYMENT_CORE_ABI,
             functionName: 'updateSafetyLimits',
@@ -325,8 +333,10 @@ export function App() {
     try {
       const client = walletClient || (profile.privateKey ? getWalletClientForPrivateKey(profile.privateKey) : null);
       if (client) {
+        const account = profile.address || client.account;
         try {
           await client.writeContract({
+            ...(account ? { account } : {}),
             address: CONTRACT_ADDRESSES.MUSD,
             abi: ERC20_ABI,
             functionName: 'approve',
@@ -353,8 +363,10 @@ export function App() {
       const client = walletClient || (profile.privateKey ? getWalletClientForPrivateKey(profile.privateKey) : null);
       const allowanceWei = parseUnits('500', 18);
       if (client) {
+        const account = profile.address || client.account;
         try {
           await client.writeContract({
+            ...(account ? { account } : {}),
             address: CONTRACT_ADDRESSES.MUSD,
             abi: ERC20_ABI,
             functionName: 'approve',
