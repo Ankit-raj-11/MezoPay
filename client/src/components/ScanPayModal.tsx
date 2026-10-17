@@ -4,6 +4,7 @@ import confetti from 'canvas-confetti';
 import { soundbox } from '../services/soundbox';
 import { VERIFIED_MERCHANTS } from '../config/verifiedMerchants';
 import { lookupAddress } from '../services/names';
+import { CameraQRScanner } from './CameraQRScanner';
 
 interface ScanPayModalProps {
   isOpen: boolean;
@@ -20,6 +21,7 @@ export const ScanPayModal: React.FC<ScanPayModalProps> = ({
   initialPayload = '',
   remainingDailySpend,
 }) => {
+  const [scanMode, setScanMode] = useState<'camera' | 'manual'>('camera');
   const [payloadInput, setPayloadInput] = useState(initialPayload);
   const [parsedPayment, setParsedPayment] = useState<any | null>(null);
   const [merchantName, setMerchantName] = useState<string | null>(null);
@@ -215,42 +217,67 @@ export const ScanPayModal: React.FC<ScanPayModalProps> = ({
           </div>
         ) : (
           <div>
-            {/* Input / Scanner Simulation */}
-            <div style={{ marginBottom: '16px' }}>
-              <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '6px' }}>
-                PASTE PAYMENT LINK OR QR PAYLOAD
-              </label>
-              <div style={{ display: 'flex', gap: '8px' }}>
-                <input
-                  type="text"
-                  placeholder="https://mezopay.app/pay?addr=0x...&amount=12.50"
-                  value={payloadInput}
-                  onChange={(e) => {
-                    setPayloadInput(e.target.value);
-                    if (e.target.value.length > 10) {
-                      parsePayload(e.target.value);
-                    }
-                  }}
-                  style={{
-                    flex: 1,
-                    background: 'rgba(255, 255, 255, 0.05)',
-                    border: '1px solid var(--border-subtle)',
-                    borderRadius: 'var(--radius-sm)',
-                    padding: '10px 14px',
-                    color: '#fff',
-                    fontSize: '13px',
-                    fontFamily: 'var(--font-mono)'
-                  }}
-                />
-                <button
-                  className="btn-secondary"
-                  onClick={() => parsePayload(payloadInput)}
-                  style={{ padding: '10px 14px' }}
-                >
-                  Parse
-                </button>
-              </div>
+            {/* Mode Switcher: Camera vs Paste/Presets */}
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+              <button
+                className={`btn-secondary ${scanMode === 'camera' ? 'badge-verified' : ''}`}
+                style={{ flex: 1, padding: '8px', fontSize: '12px' }}
+                onClick={() => setScanMode('camera')}
+              >
+                📸 Mobile Camera
+              </button>
+              <button
+                className={`btn-secondary ${scanMode === 'manual' ? 'badge-verified' : ''}`}
+                style={{ flex: 1, padding: '8px', fontSize: '12px' }}
+                onClick={() => setScanMode('manual')}
+              >
+                📋 Paste Link / Presets
+              </button>
             </div>
+
+            {scanMode === 'camera' && !parsedPayment && (
+              <div style={{ marginBottom: '16px' }}>
+                <CameraQRScanner onScan={(decodedText) => parsePayload(decodedText)} />
+              </div>
+            )}
+
+            {scanMode === 'manual' && (
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '6px' }}>
+                  PASTE PAYMENT LINK OR QR PAYLOAD
+                </label>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <input
+                    type="text"
+                    placeholder="https://mezopay.app/pay?addr=0x...&amount=12.50"
+                    value={payloadInput}
+                    onChange={(e) => {
+                      setPayloadInput(e.target.value);
+                      if (e.target.value.length > 10) {
+                        parsePayload(e.target.value);
+                      }
+                    }}
+                    style={{
+                      flex: 1,
+                      background: 'rgba(255, 255, 255, 0.05)',
+                      border: '1px solid var(--border-subtle)',
+                      borderRadius: 'var(--radius-sm)',
+                      padding: '10px 14px',
+                      color: '#fff',
+                      fontSize: '13px',
+                      fontFamily: 'var(--font-mono)'
+                    }}
+                  />
+                  <button
+                    className="btn-secondary"
+                    onClick={() => parsePayload(payloadInput)}
+                    style={{ padding: '10px 14px' }}
+                  >
+                    Parse
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Quick Demo Pay Presets */}
             <div style={{ display: 'flex', gap: '6px', marginBottom: '20px', flexWrap: 'wrap' }}>

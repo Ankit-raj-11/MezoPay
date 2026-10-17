@@ -1,0 +1,17 @@
+{
+  "short_name": "MezoPay",
+  "name": "MezoPay — Spend Bitcoin without selling it",
+  "description": "Web2-speed payment engine on Mezo Network. Instant merchant QR payments, handles, soundbox, and bill splitting.",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "type": "image/svg+xml",
+      "sizes": "192x192 512x512"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#07090e",
+  "theme_color": "#00e599",
+  "display": "standalone",
+  "orientation": "portrait"
+}
