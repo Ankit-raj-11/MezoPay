@@ -8,8 +8,10 @@ import {
   Check,
   ArrowRight,
   RotateCcw,
+  Fingerprint,
 } from 'lucide-react';
 import { getInjectedWalletClient, getInAppWalletClient } from '../services/web3';
+import { NativeBridge } from '../services/native';
 import {
   hasVault,
   getStoredVaultAddress,
@@ -86,18 +88,66 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onAuthenticated })
     }
   }, [lockoutUntil]);
 
+  // Screen-capture blocking on recovery phrase screen
+  useEffect(() => {
+    if (mode === 'show_phrase') {
+      NativeBridge.setScreenCaptureBlocked(true).catch(() => {});
+    } else {
+      NativeBridge.setScreenCaptureBlocked(false).catch(() => {});
+    }
+    return () => {
+      NativeBridge.setScreenCaptureBlocked(false).catch(() => {});
+    };
+  }, [mode]);
+
+  const handleBiometricUnlock = async () => {
+    if (lockoutRemaining > 0 || isProcessing) return;
+    try {
+      const ok = await NativeBridge.authenticateBiometric('Unlock MezoPay', 'Authenticate to access your wallet');
+      if (ok) {
+        const cachedPin = await NativeBridge.secureGet('app_lock_pin');
+        if (cachedPin && cachedPin.length >= 6) {
+          setIsProcessing(true);
+          try {
+            const unlocked = await unlockVault(cachedPin);
+            const client = getInAppWalletClient(unlocked.account);
+            const profile = {
+              id: 'in_app_wallet',
+              name: 'Device Wallet',
+              handle: '',
+              address: unlocked.address,
+              role: 'consumer' as const,
+            };
+            NativeBridge.haptic('success').catch(() => {});
+            onAuthenticated(profile, client, false);
+            return;
+          } catch (e) {
+            console.warn('Unlock with cached PIN failed:', e);
+          } finally {
+            setIsProcessing(false);
+          }
+        } else {
+          setErrorMsg('Biometric authentication succeeded, but please enter your 6-digit PIN once to enable fast unlock.');
+        }
+      }
+    } catch (err: any) {
+      console.warn('Biometric unlock failed:', err);
+    }
+  };
+
   if (!isOpen) return null;
 
   // Handle PIN Digit Entry for Unlock or Setup
   const handlePinDigit = async (digit: string) => {
     if (lockoutRemaining > 0 || isProcessing) return;
-    if (pinInput.length >= 4) return;
+    if (pinInput.length >= 6) return;
 
+    NativeBridge.haptic('light').catch(() => {});
     const nextPin = pinInput + digit;
     setPinInput(nextPin);
     setErrorMsg(null);
 
-    if (nextPin.length === 4) {
+    if (nextPin.length === 6) {
       if (mode === 'unlock') {
         // Attempt decryption
         setIsProcessing(true);
@@ -113,11 +163,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onAuthenticated })
           };
           setPinInput('');
           setFailedAttempts(0);
+          NativeBridge.haptic('success').catch(() => {});
+          NativeBridge.secureSet('app_lock_pin', nextPin).catch(() => {});
           onAuthenticated(profile, client, false);
         } catch {
           const nextFailed = failedAttempts + 1;
           setFailedAttempts(nextFailed);
           setPinInput('');
+          NativeBridge.haptic('heavy').catch(() => {});
           if (nextFailed >= 5) {
             const until = Date.now() + 30000;
             setLockoutUntil(until);
@@ -142,6 +195,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onAuthenticated })
             try {
               const wallet = await createVault(nextPin);
               setGeneratedWallet(wallet);
+              NativeBridge.secureSet('app_lock_pin', nextPin).catch(() => {});
               // Pick 2 random distinct indices for backup verification (1 to 12)
               const idx1 = Math.floor(Math.random() * 6) + 1; // 1..6
               const idx2 = Math.floor(Math.random() * 6) + 7; // 7..12
@@ -206,8 +260,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onAuthenticated })
       return;
     }
 
-    if (pinInput.length !== 4) {
-      setErrorMsg('Please enter a 4-digit App lock PIN.');
+    if (pinInput.length < 6) {
+      setErrorMsg('Please enter a 6-digit App lock PIN.');
       return;
     }
 
@@ -442,7 +496,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onAuthenticated })
 
             {/* PIN Dots */}
             <div style={{ display: 'flex', justifyContent: 'center', gap: '14px', marginBottom: '20px' }}>
-              {[0, 1, 2, 3].map((idx) => (
+              {[0, 1, 2, 3, 4, 5].map((idx) => (
                 <div
                   key={idx}
                   style={{
@@ -491,7 +545,24 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onAuthenticated })
                   {digit}
                 </button>
               ))}
-              <div />
+              <button
+                onClick={handleBiometricUnlock}
+                disabled={lockoutRemaining > 0 || isProcessing}
+                title="Unlock with Biometrics"
+                style={{
+                  height: '48px',
+                  borderRadius: '50%',
+                  background: 'rgba(0, 229, 153, 0.1)',
+                  border: '1px solid rgba(0, 229, 153, 0.3)',
+                  color: 'var(--mezo-green)',
+                  cursor: lockoutRemaining > 0 ? 'not-allowed' : 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Fingerprint size={22} />
+              </button>
               <button
                 onClick={() => handlePinDigit('0')}
                 disabled={lockoutRemaining > 0 || isProcessing}
@@ -560,17 +631,17 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onAuthenticated })
         {mode === 'create_pin' && (
           <div>
             <div style={{ fontSize: '14px', color: 'var(--text-primary)', fontWeight: 700, marginBottom: '6px' }}>
-              {confirmPinStep ? 'Confirm your App lock PIN' : 'Create 4-digit App lock PIN'}
+              {confirmPinStep ? 'Confirm your App lock PIN' : 'Create 6-digit App lock PIN'}
             </div>
             <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '16px' }}>
               {confirmPinStep
-                ? 'Re-enter your 4-digit PIN to confirm.'
+                ? 'Re-enter your 6-digit PIN to confirm.'
                 : 'Encrypts your non-custodial wallet locally on this phone.'}
             </div>
 
             {/* PIN Dots */}
             <div style={{ display: 'flex', justifyContent: 'center', gap: '14px', marginBottom: '20px' }}>
-              {[0, 1, 2, 3].map((idx) => (
+              {[0, 1, 2, 3, 4, 5].map((idx) => (
                 <div
                   key={idx}
                   style={{
@@ -861,7 +932,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onAuthenticated })
                 Restore MezoPay Wallet
               </div>
               <p style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                Enter your 12-word recovery phrase and choose a new 4-digit App lock PIN.
+                Enter your 12-word recovery phrase and choose a new 6-digit App lock PIN.
               </p>
             </div>
 
@@ -881,14 +952,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onAuthenticated })
 
             <div style={{ marginBottom: '18px' }}>
               <label style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
-                New 4-Digit App lock PIN
+                New 6-Digit App lock PIN
               </label>
               <input
                 type="password"
-                maxLength={4}
+                maxLength={6}
                 value={pinInput}
                 onChange={(e) => setPinInput(e.target.value.replace(/[^0-9]/g, ''))}
-                placeholder="••••"
+                placeholder="••••••"
                 className="input-field"
                 style={{ width: '100%', padding: '10px', fontSize: '16px', letterSpacing: '4px', textAlign: 'center' }}
               />
@@ -896,7 +967,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onAuthenticated })
 
             <button
               onClick={handleRestoreSubmit}
-              disabled={isProcessing || !restoreMnemonicInput || pinInput.length !== 4}
+              disabled={isProcessing || !restoreMnemonicInput || pinInput.length < 6}
               className="btn btn-primary"
               style={{ width: '100%', padding: '12px', fontWeight: 800, fontSize: '14px' }}
             >

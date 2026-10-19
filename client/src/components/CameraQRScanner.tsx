@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Html5Qrcode } from 'html5-qrcode';
 import { Camera, CameraOff } from 'lucide-react';
+import { NativeBridge } from '../services/native';
 
 interface CameraQRScannerProps {
   onScan: (decodedText: string) => void;
@@ -29,6 +30,7 @@ export const CameraQRScanner: React.FC<CameraQRScannerProps> = ({ onScan }) => {
           (decodedText) => {
             // Success callback
             scanner.stop().catch(() => {});
+            NativeBridge.haptic('success').catch(() => {});
             onScan(decodedText);
           },
           () => {

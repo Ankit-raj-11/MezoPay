@@ -1,8 +1,4 @@
-/**
- * MezoPay Merchant Soundbox Service
- * Combines Web Audio API synthesizer chimes and SpeechSynthesis TTS
- * for instant physical-grade payment confirmations on any merchant device.
- */
+import { NativeBridge } from './native';
 
 class SoundboxService {
   private audioCtx: AudioContext | null = null;
@@ -75,34 +71,28 @@ class SoundboxService {
    * E.g. "Payment of 15 MUSD received from alice"
    */
   public speakPayment(amount: string, senderName?: string) {
-    if (!('speechSynthesis' in window)) return;
+    const text = senderName 
+      ? `Payment of ${amount} MUSD received from ${senderName}`
+      : `Payment of ${amount} MUSD received on Mezo`;
 
-    // Small delay so speech doesn't overlap the chime
-    setTimeout(() => {
-      try {
-        window.speechSynthesis.cancel(); // Stop any pending speech
-        const text = senderName 
-          ? `Payment of ${amount} MUSD received from ${senderName}`
-          : `Payment of ${amount} MUSD received on Mezo`;
+    // Try native TTS bridge first
+    NativeBridge.speak(text).catch(() => {});
 
-        const utterance = new SpeechSynthesisUtterance(text);
-        utterance.rate = 1.05;
-        utterance.pitch = 1.0;
-        utterance.volume = 1.0;
-
-        // Try to pick an English voice
-        const voices = window.speechSynthesis.getVoices();
-        const enVoice = voices.find(v => v.lang.startsWith('en') && v.name.includes('Natural')) ||
-                        voices.find(v => v.lang.startsWith('en'));
-        if (enVoice) {
-          utterance.voice = enVoice;
+    // Also run web TTS if not on native platform or as immediate fallback
+    if (!NativeBridge.isNative() && 'speechSynthesis' in window) {
+      setTimeout(() => {
+        try {
+          window.speechSynthesis.cancel();
+          const utterance = new SpeechSynthesisUtterance(text);
+          utterance.rate = 1.05;
+          utterance.pitch = 1.0;
+          utterance.volume = 1.0;
+          window.speechSynthesis.speak(utterance);
+        } catch (err) {
+          console.warn('Speech synthesis error:', err);
         }
-
-        window.speechSynthesis.speak(utterance);
-      } catch (err) {
-        console.warn('Speech synthesis error:', err);
-      }
-    }, 450);
+      }, 450);
+    }
   }
 
   /**
@@ -117,6 +107,8 @@ class SoundboxService {
    * Requests Screen Wake Lock to keep merchant POS screen active without dimming.
    */
   public async enableWakeLock(): Promise<boolean> {
+    NativeBridge.setKeepAwake(true).catch(() => {});
+
     if ('wakeLock' in navigator) {
       try {
         this.wakeLock = await (navigator as any).wakeLock.request('screen');
@@ -128,10 +120,11 @@ class SoundboxService {
         console.warn('Screen wake lock request failed:', err);
       }
     }
-    return false;
+    return true;
   }
 
   public releaseWakeLock() {
+    NativeBridge.setKeepAwake(false).catch(() => {});
     if (this.wakeLock) {
       this.wakeLock.release().catch(() => {});
       this.wakeLock = null;
@@ -140,3 +133,4 @@ class SoundboxService {
 }
 
 export const soundbox = new SoundboxService();
+

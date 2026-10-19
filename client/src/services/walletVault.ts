@@ -33,7 +33,7 @@ function hexToBuf(hex: string): Uint8Array {
 }
 
 /**
- * Derives an AES-GCM 256-bit CryptoKey from a user PIN using PBKDF2 (100,000 iterations).
+ * Derives an AES-GCM 256-bit CryptoKey from a user PIN using PBKDF2 (600,000 iterations).
  */
 async function deriveAesKey(pin: string, salt: Uint8Array): Promise<CryptoKey> {
   const enc = new TextEncoder();
@@ -49,7 +49,7 @@ async function deriveAesKey(pin: string, salt: Uint8Array): Promise<CryptoKey> {
     {
       name: 'PBKDF2',
       salt: salt as unknown as BufferSource,
-      iterations: 100000,
+      iterations: 600000,
       hash: 'SHA-256',
     },
     keyMaterial,
@@ -87,6 +87,9 @@ export function getStoredVaultAddress(): `0x${string}` | null {
  * If customMnemonic is provided, restores that wallet; otherwise generates a new 12-word phrase.
  */
 export async function createVault(pin: string, customMnemonic?: string): Promise<UnlockedWallet> {
+  if (!pin || pin.length < 6) {
+    throw new Error('App lock PIN must be at least 6 digits.');
+  }
   const mnemonic = customMnemonic ? customMnemonic.trim().toLowerCase() : generateMnemonic(english);
   const account = mnemonicToAccount(mnemonic);
   const address = account.address;
@@ -121,6 +124,9 @@ export async function createVault(pin: string, customMnemonic?: string): Promise
  * Throws an error if the PIN is incorrect.
  */
 export async function unlockVault(pin: string): Promise<UnlockedWallet> {
+  if (!pin || pin.length < 6) {
+    throw new Error('App lock PIN must be at least 6 digits.');
+  }
   const raw = localStorage.getItem(STORAGE_KEY);
   if (!raw) {
     throw new Error('No wallet vault found on this device. Please create or restore one.');

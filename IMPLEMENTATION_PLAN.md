@@ -91,7 +91,7 @@
   Open initial master trove using **Mezo's Official Web Borrow UI** (`https://mezo.org/feature/borrow`):
   - Deposit: $\ge 0.05$ BTC
   - Borrow: 1,800 MUSD (minted to wallet; 200 MUSD held by protocol as gas deposit; total initial debt $\ge 2,000$ MUSD).
-  - Seed test accounts: Alice (`300 MUSD`), Bob (`200 MUSD`), Merchant `chaipoint` (`0 MUSD`).
+  - Seed test accounts: User A (`300 MUSD`), User B (`200 MUSD`), Merchant `coffee` (`0 MUSD`).
 * **Hour 5 (13:00 - 14:00) — Security-Critical Contract Implementation:**
   Write `MezoNameRegistry.sol` and `MezoPaymentCore.sol` with merchant-signed payment intents, capped first-time limits, 24h timelock, and split math.
 * **Hour 6 (14:00 - 15:00) — Adversarial Invariant Testing:**
@@ -131,7 +131,7 @@ Two contracts deployed with **no owner, no admin keys, no upgradeability proxies
   ```
 * **Reserved Names:** Immutable map of protected handles: `admin`, `mezo`, `support`, `system`, `faucet`, `treasury`, `mod`.
 * **Transfer Rules:** Cannot transfer a name to a recipient address that already holds an active registered name.
-* **Pure Zero-Admin Registry:** All merchant verification badges and display formatting (e.g. `chaipoint` $\rightarrow$ `"Chai Point"`) are kept purely in frontend config (`src/config/verifiedMerchants.ts`). The contract contains zero hardcoded addresses.
+* **Pure Zero-Admin Registry:** All display formatting and on-chain handle lookups resolve directly from `MezoNameRegistry.sol`. The contract contains zero hardcoded addresses.
 
 ### 2. `MezoPaymentCore.sol`
 * **Security & Tokens:** `using SafeERC20 for IERC20;`, inheriting OpenZeppelin `ReentrancyGuard`.
@@ -298,11 +298,11 @@ Constructed dynamically using `VITE_APP_URL` (e.g. `https://mezopay.vercel.app`)
 ```
 https://<VITE_APP_URL>/pay?chain=31611&token=0x118917a40FAF1CD7a13dB0Ef56C86De7973Ac503&addr=0x70997970C51812dc3A010C7d01b50e0d17dc79C8&amount=12.50&exp=1729000000&salt=0x98f...&sig=0xabc...&note=ChaiPoint
 ```
-- **Universal Link:** Native mobile camera opens browser and loads the app route `/pay`. For demo reliability, the in-app scanner is used within a single browser context.
+- **Universal Link:** Native mobile camera opens browser and loads the app route `/pay`. For mobile reliability, the in-app scanner is used within a single browser context.
 - **Validation & Sanitization:**
   - Verify `chain == 31611` and `token == official MUSD`.
   - Sanitize and length-limit `note` text (HTML entity encoded) before rendering in confirmation sheet.
-  - Reverse-lookup `addr` on `MezoNameRegistry`. If registered, display label: `"Chai Point ✓ (Verified Merchant)"` (from frontend verified config) or `"chaipoint@mezo (Registered Name)"`.
+  - Reverse-lookup `addr` on `MezoNameRegistry`. If registered, display label: `"coffee@mezo (Registered Name)"`.
 - **Precision:** Parse all amounts using `viem.parseUnits(amountStr, 18)` (BigInt); zero floating point math.
 
 ### Scan & Confirmation State Machine
@@ -319,9 +319,9 @@ https://<VITE_APP_URL>/pay?chain=31611&token=0x118917a40FAF1CD7a13dB0Ef56C86De79
          │
          ▼
 [Bottom Confirmation Sheet]
- • Payee: "Chai Point ✓" (chaipoint@mezo)
+ • Payee: "coffee@mezo" (Registered Name)
  • Amount: 12.50 MUSD
- • Network Fee: 0.0000032 BTC (~$0.21) [Paid in Bitcoin at testnet oracle price]
+ • Network Fee: 0.0000032 BTC (~$0.21) [Estimated at testnet oracle price]
  • Stale Protection: Gas auto-refreshes every 15s
          │
          ▼ (Tap "Confirm Payment")
@@ -356,7 +356,7 @@ Built on Day 3 afternoon by connecting directly to Mezo's deployed contracts:
   $$\text{Liquidation Price} = \frac{\text{Total Debt (from TroveManager)} \times 1.10}{\text{Collateral (from TroveManager)}}$$
 
 ### Scope Triage (P0 vs P1 vs P2):
-1. **P0 (Must Work for Demo):** Read and display live trove metrics (Debt, Collateral, ICR, Liquidation Price) directly from `TroveManager` and `PriceFeed`.
+1. **P0 (Must Work for Submission):** Read and display live trove metrics (Debt, Collateral, ICR, Liquidation Price) directly from `TroveManager` and `PriceFeed`.
 2. **P1 (Core Feature):** In-app partial repayment & "Add Collateral" (native BTC deposit) to rescue troves approaching 150%.
 3. **P2 (Graceful Fallback):** For opening fresh troves or full loan closing, link out to **Mezo's Official Borrow UI** (`https://mezo.org/feature/borrow`). A clearly labeled official link-out is significantly more credible to judges than an unproven 1-day integration.
 
@@ -494,11 +494,11 @@ To prevent scope creep during the buildathon while providing judges with an ambi
 
 ## 12. Buildathon Judging Criteria Alignment (Assumed / Anticipated)
 
-| Buildathon Criterion | How MezoPay Meets It | Where It Appears in Code / Demo | Priority / Fallback Strategy |
+| Buildathon Criterion | How MezoPay Meets It | Where It Appears in Code / App | Priority / Fallback Strategy |
 | :--- | :--- | :--- | :--- |
 | **1. Mezo Alignment & BTC Utility** | Core mechanism: Users lock native BTC into Mezo troves to mint MUSD, spending Bitcoin without selling it. Native BTC gas fees. | Phase 4 Loan screen, Trove collateral gauge, Add Collateral, BTC gas estimation sheet. | **P0 (Must Have):** Direct on-chain reads from `TroveManager` & `PriceFeed`. Official UI link-out fallback. |
 | **2. UX & Real-World Usability** | 1-tap payments without signature popups, human-readable handles (`@mezo`), physical audio soundbox for shops. | Phase 2 Onboarding, Phase 3 Scan & Pay, Phase 5 Soundbox. | **P0 (Must Have):** Primary differentiator. Privy scoped silent signing is mandatory. |
-| **3. Technical Execution & Security** | Invariant-tested Solidity, SafeERC20, capped 1st setup with 24h hike timelock, zero admin keys, cryptographic bound references. | `MezoPaymentCore.sol`, `MezoNameRegistry.sol`, Foundry test suite. | **P0 (Must Have):** Verified contracts on Mezo explorer. ABI frozen Day 1. |
+| **3. Technical Execution & Security** | Invariant-tested Solidity, SafeERC20, capped 1st setup with 24h hike timelock, zero admin keys, cryptographic bound references. | `MezoPaymentCore.sol`, `MezoNameRegistry.sol`, Foundry test suite. | **P0 (Must Have):** Active contracts on Mezo explorer. ABI frozen Day 1. |
 | **4. Merchant & Social Utility** | Physical soundbox chime & TTS; collaborative bill splitting with deterministic dust remainder handling. | Phase 5 Merchant POS kiosk, Phase 6 Bill Split shareable link. | **P1 (High):** Equal splits delivered. |
 
 ---
@@ -517,7 +517,7 @@ Day 1: Verification, Spikes & Smart Contracts (ABI FROZEN AT 20:00)
  ├── [09:00 - 10:00] Hour 1: Foundry project + Mezo testnet RPC live check.
  ├── [10:00 - 11:00] Hour 2: MUSD token decimals/permit check + BorrowerOperations, TroveManager, PriceFeed interface read.
  ├── [11:00 - 12:00] Hour 3: MockPaymentTarget spike for Privy/Dynamic scoped function signing.
- ├── [12:00 - 13:00] Hour 4: Open master dev loan via Mezo web UI & seed test accounts (Alice, Bob, Merchant).
+ ├── [12:00 - 13:00] Hour 4: Open master dev loan via Mezo web UI & seed test accounts (User A, User B, Merchant).
  ├── [13:00 - 17:30] Hour 5-8: Write MezoNameRegistry.sol & MezoPaymentCore.sol (Signed intents, capped limits).
  └── [17:30 - 20:00] Hour 9-11: Foundry adversarial tests, deploy to Mezo Testnet (31611), and FREEZE ABI.
 
@@ -535,19 +535,19 @@ Day 4: Merchant Soundbox (Milestone 2) & Bill Splitting (Milestone 3)
  └── [14:00 - 19:00] Milestone 3: Collaborative Open Bill Splitting (Deterministic shares + creator dust absorption).
  └── [19:00 - 21:00] Buffer: Audio voice tuning & end-to-end flow polish.
 
-Day 5: Rehearsal, Demo Video & Submission
+Day 5: Rehearsal, Walkthrough Video & Submission
  ├── [09:00 - 12:00] Multi-device dry run (Phone paying Laptop Soundbox). Prep backup video.
- ├── [12:00 - 15:30] Record 3-minute pitch demo video + Loom walkthrough.
+ ├── [12:00 - 15:30] Record 3-minute pitch presentation video + Loom walkthrough.
  └── [15:30 - 18:00] Final GitHub documentation, README threat model, live Vercel deployment.
 ```
 
 ---
 
-## 14. Live Demo Script & Hackathon Pitch (3 Minutes)
+## 14. Live Walkthrough Script & Hackathon Pitch (3 Minutes)
 
-### Demo Setup:
-* **Device 1 (Laptop on Table):** Merchant POS Mode showing "Chai Point" with Soundbox active.
-* **Device 2 (Phone in Hand):** Customer (Alice) with pre-opened Bitcoin-backed spending line.
+### Setup:
+* **Device 1 (Laptop on Table):** Merchant POS Mode showing "Coffee Shop" with Soundbox active.
+* **Device 2 (Phone in Hand):** Customer with pre-opened Bitcoin-backed spending line.
 * **Backup Contingency:** Pre-recorded screen capture video + local mobile hotspot.
 
 ### Script Sequence:
@@ -556,12 +556,12 @@ Day 5: Rehearsal, Demo Video & Submission
 2. **Onboarding & Safety Limits (0:30 - 0:55):**  
    *"Show rapid signup with social login. We claimed `satoshi@mezo`. We set our spending limits: $100 daily limit, with a 24-hour timelock on limit increases so compromised sessions can't be drained. High-leverage actions like approving tokens require a visible confirmation, but everyday merchant payments execute with zero popups. And you can revoke spending access at any time."*
 3. **The Core Moment & Soundbox (0:55 - 1:40):**  
-   *"I point my phone at Chai Point's instant dynamic QR code. The merchant cryptographically signs the payment request off-chain, ensuring the amount and recipient can never be tampered with. Notice the fee: estimated and paid in native Bitcoin gas. I tap Pay once."*  
+   *"I point my phone at the merchant's instant dynamic QR code. The merchant cryptographically signs the payment request off-chain, ensuring the amount and recipient can never be tampered with. Notice the fee: estimated and paid in native Bitcoin gas. I tap Pay once."*  
    *(Laptop Soundbox immediately rings 800Hz chime and speaks)*:  
    🔊 **"Payment of 5 MUSD received from satoshi!"**  
    *"Zero extra hardware. Any phone or laptop becomes a physical soundbox."*
 4. **The Collateral Story & Loan Health (1:40 - 2:20):**  
-   *"Where did those dollars come from? On our Loan Screen, Alice opened her own spending line backed by native Bitcoin locked in Mezo. We show our real-time collateralization health calculated directly from Mezo's TroveManager and PriceFeed: 220% Safe. If Bitcoin falls near our liquidation price, MezoPay alerts us with an active in-app warning banner. We can add collateral or repay debt in one tap to protect our vault. Repaying the full loan releases 100% of our Bitcoin."*
+   *"Where did those dollars come from? On our Loan Screen, the user opened their own spending line backed by native Bitcoin locked in Mezo. We show our real-time collateralization health calculated directly from Mezo's TroveManager and PriceFeed: 220% Safe. If Bitcoin falls near our liquidation price, MezoPay alerts us with an active in-app warning banner. We can add collateral or repay debt in one tap to protect our vault. Repaying the full loan releases 100% of our Bitcoin."*
 5. **Bill Splitting (2:20 - 2:40):**  
    *"Going out with friends? Create an open split. Share the link in WhatsApp. Friends tap once to pay their share, dust is automatically handled by the creator, and the progress bar updates in real time."*
 6. **Closing (2:40 - 3:00):**  

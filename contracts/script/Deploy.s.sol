@@ -4,7 +4,6 @@ pragma solidity 0.8.24;
 import "forge-std/Script.sol";
 import "../src/MezoNameRegistry.sol";
 import "../src/MezoPaymentCore.sol";
-import "../src/MockPaymentTarget.sol";
 
 contract DeployScript is Script {
     // Official verified MUSD token address on Mezo Testnet (Chain ID 31611)
@@ -43,10 +42,6 @@ contract DeployScript is Script {
         MezoPaymentCore core = new MezoPaymentCore(MUSD_TESTNET);
         console.log("MezoPaymentCore deployed at:", address(core));
 
-        // 3. Deploy MockPaymentTarget (useful for policy spikes)
-        MockPaymentTarget mockTarget = new MockPaymentTarget();
-        console.log("MockPaymentTarget deployed at:", address(mockTarget));
-
         vm.stopBroadcast();
 
         console.log("--------------------------------------------------");
@@ -54,7 +49,6 @@ contract DeployScript is Script {
         console.log("MUSD Token:", MUSD_TESTNET);
         console.log("MezoNameRegistry:", address(registry));
         console.log("MezoPaymentCore:", address(core));
-        console.log("MockPaymentTarget:", address(mockTarget));
         console.log("--------------------------------------------------");
     }
 }

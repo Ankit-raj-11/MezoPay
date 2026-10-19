@@ -1,6 +1,6 @@
 import { formatUnits, parseAbiItem } from 'viem';
 import { publicClient } from './web3';
-import { CONTRACT_ADDRESSES } from '../config/contracts';
+import { CONTRACT_ADDRESSES, PAYMENT_CORE_DEPLOY_BLOCK } from '../config/contracts';
 import { lookupAddress } from './names';
 
 export interface ActivityItem {
@@ -19,8 +19,6 @@ export interface ContactItem {
   address: string;
 }
 
-// MezoPaymentCore deployment block on Mezo Testnet (Chain 31611)
-const PAYMENT_CORE_DEPLOY_BLOCK = 16204650n;
 const CHUNK_SIZE = 2000n;
 
 const PAYMENT_ANNOUNCED_EVENT = parseAbiItem(

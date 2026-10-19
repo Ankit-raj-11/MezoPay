@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const contracts = ['MezoNameRegistry', 'MezoPaymentCore', 'MockPaymentTarget'];
+const contracts = ['MezoNameRegistry', 'MezoPaymentCore'];
 const outDir = path.join(__dirname, '..', 'contracts', 'out');
 const abisDir = path.join(__dirname, '..', 'contracts', 'abis');
 

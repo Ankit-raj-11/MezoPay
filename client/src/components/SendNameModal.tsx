@@ -78,7 +78,7 @@ export const SendNameModal: React.FC<SendNameModalProps> = ({
           colors: ['#00e599', '#f7931a', '#ffffff'],
         });
       } else {
-        setErrorMsg('Payment failed. Please verify your allowance and daily limit.');
+        setErrorMsg('Payment failed. Please check your allowance and daily limit.');
       }
     } catch (err: any) {
       setErrorMsg(err.message || 'Payment execution failed');

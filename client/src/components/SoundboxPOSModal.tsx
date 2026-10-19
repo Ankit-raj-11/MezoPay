@@ -169,7 +169,7 @@ export const SoundboxPOSModal: React.FC<SoundboxPOSModalProps> = ({
             </button>
             <button
               onClick={toggleWakeLock}
-              className={`badge ${wakeLockActive ? 'badge-verified' : ''}`}
+              className={`badge ${wakeLockActive ? 'badge-active' : ''}`}
               style={{
                 cursor: 'pointer',
                 padding: '4px 8px',

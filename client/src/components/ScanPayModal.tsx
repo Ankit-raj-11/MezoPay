@@ -1,18 +1,20 @@
 import React, { useState, useEffect } from 'react';
-import { X, CheckCircle2, AlertTriangle, QrCode, ArrowRight, Zap } from 'lucide-react';
+import { X, CheckCircle2, AlertTriangle, QrCode, ArrowRight, Zap, RefreshCw } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { soundbox } from '../services/soundbox';
 import { lookupAddress } from '../services/names';
 import { CameraQRScanner } from './CameraQRScanner';
-import { estimateGasFee } from '../services/payment';
+import { estimateGasFee, type GasEstimateResult } from '../services/payment';
 
 interface ScanPayModalProps {
   isOpen: boolean;
   onClose: () => void;
   onExecutePayment: (to: `0x${string}`, amount: string, note: string, refData?: any) => Promise<boolean>;
   initialPayload?: string;
+  userAddress?: `0x${string}`;
   remainingDailySpend: string;
   allowance: string;
+  onOpenAllowanceModal?: (requiredAmount?: string) => void;
 }
 
 export const ScanPayModal: React.FC<ScanPayModalProps> = ({
@@ -20,15 +22,17 @@ export const ScanPayModal: React.FC<ScanPayModalProps> = ({
   onClose,
   onExecutePayment,
   initialPayload = '',
+  userAddress,
   remainingDailySpend,
   allowance,
+  onOpenAllowanceModal,
 }) => {
   const [scanMode, setScanMode] = useState<'camera' | 'manual'>('camera');
   const [payloadInput, setPayloadInput] = useState(initialPayload);
   const [parsedPayment, setParsedPayment] = useState<any | null>(null);
   const [customAmount, setCustomAmount] = useState('10.00');
   const [merchantName, setMerchantName] = useState<string | null>(null);
-  const [gasFee, setGasFee] = useState<{ gasPriceGwei: string; estimatedFeeBTC: string; estimatedFeeUSD: string } | null>(null);
+  const [gasFee, setGasFee] = useState<GasEstimateResult | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [paymentSuccess, setPaymentSuccess] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -124,7 +128,17 @@ export const ScanPayModal: React.FC<ScanPayModalProps> = ({
         isPermanentQR,
       });
 
-      estimateGasFee().then(setGasFee).catch(() => null);
+      estimateGasFee({
+        account: userAddress,
+        to: addr as `0x${string}`,
+        amountMUSD: amount || customAmount,
+        note,
+        isDynamic: Boolean(sig && salt && exp),
+        merchant: addr as `0x${string}`,
+        expiry: exp ? Number(exp) : undefined,
+        salt: salt as `0x${string}` | undefined,
+        signature: sig as `0x${string}` | undefined,
+      }).then(setGasFee).catch(() => null);
     } catch {
       setErrorMsg('Failed to parse QR payload. Please ensure it is a valid MezoPay link.');
       setParsedPayment(null);
@@ -137,6 +151,11 @@ export const ScanPayModal: React.FC<ScanPayModalProps> = ({
 
     if (Number(effectiveAmount) > Number(remainingDailySpend)) {
       setErrorMsg(`Payment of ${effectiveAmount} MUSD exceeds your remaining daily limit (${remainingDailySpend} MUSD).`);
+      return;
+    }
+
+    if (Number(allowance) < Number(effectiveAmount)) {
+      setErrorMsg(`MUSD Allowance is too low (${allowance} MUSD). Please click "Refresh allowance" below to choose your spending limit.`);
       return;
     }
 
@@ -238,14 +257,14 @@ export const ScanPayModal: React.FC<ScanPayModalProps> = ({
             {/* Mode Switcher: Camera vs Paste/Presets */}
             <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
               <button
-                className={`btn-secondary ${scanMode === 'camera' ? 'badge-verified' : ''}`}
+                className={`btn-secondary ${scanMode === 'camera' ? 'badge-active' : ''}`}
                 style={{ flex: 1, padding: '8px', fontSize: '12px' }}
                 onClick={() => setScanMode('camera')}
               >
                 📸 Mobile Camera
               </button>
               <button
-                className={`btn-secondary ${scanMode === 'manual' ? 'badge-verified' : ''}`}
+                className={`btn-secondary ${scanMode === 'manual' ? 'badge-active' : ''}`}
                 style={{ flex: 1, padding: '8px', fontSize: '12px' }}
                 onClick={() => setScanMode('manual')}
               >
@@ -403,7 +422,7 @@ export const ScanPayModal: React.FC<ScanPayModalProps> = ({
                 }}>
                   <span>Estimated Network Fee:</span>
                   <span style={{ color: '#fff', fontWeight: 600 }}>
-                    {gasFee ? `${gasFee.estimatedFeeBTC} BTC (${gasFee.estimatedFeeUSD})` : 'Estimating...'}
+                    {gasFee ? `${gasFee.estimatedFeeBTC} (${gasFee.estimatedFeeUSD})` : 'Estimating...'}
                   </span>
                 </div>
 
@@ -414,34 +433,81 @@ export const ScanPayModal: React.FC<ScanPayModalProps> = ({
                   fontSize: '12px',
                   display: 'flex',
                   justifyContent: 'space-between',
+                  alignItems: 'center',
                   color: 'var(--text-muted)'
                 }}>
                   <span>MUSD Allowance:</span>
-                  <span style={{
-                    color: Number(allowance) >= Number(parsedPayment.isPermanentQR ? customAmount : parsedPayment.amount) ? 'var(--mezo-green)' : 'var(--mezo-orange)',
-                    fontWeight: 600
-                  }}>
-                    {Number(allowance) >= Number(parsedPayment.isPermanentQR ? customAmount : parsedPayment.amount) ? 'Approved' : 'Auto-approves on pay'}
-                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{
+                      color: Number(allowance) >= Number(parsedPayment.isPermanentQR ? customAmount : parsedPayment.amount) ? 'var(--mezo-green)' : '#f87171',
+                      fontWeight: 600
+                    }}>
+                      {Number(allowance) >= Number(parsedPayment.isPermanentQR ? customAmount : parsedPayment.amount)
+                        ? `${Number(allowance).toFixed(2)} MUSD (Approved)`
+                        : `${Number(allowance).toFixed(2)} MUSD (Too low)`}
+                    </span>
+                    {Number(allowance) < Number(parsedPayment.isPermanentQR ? customAmount : parsedPayment.amount) && onOpenAllowanceModal && (
+                      <button
+                        type="button"
+                        onClick={() => onOpenAllowanceModal(parsedPayment.isPermanentQR ? customAmount : parsedPayment.amount)}
+                        className="badge badge-warning"
+                        style={{ cursor: 'pointer', border: 'none', padding: '3px 8px', fontSize: '11px' }}
+                      >
+                        Refresh allowance
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             )}
 
-            <button
-              className="btn-primary"
-              disabled={!parsedPayment || isProcessing}
-              onClick={handlePay}
-            >
-              {isProcessing ? (
-                <>Processing on Mezo Testnet...</>
-              ) : (
-                <>
-                  <Zap size={18} />
-                  Confirm 1-Tap Payment
-                  <ArrowRight size={18} />
-                </>
-              )}
-            </button>
+            {/* Gas Estimate / Pre-flight Warning Banner */}
+            {gasFee?.failure && (
+              <div style={{
+                background: 'rgba(239, 68, 68, 0.12)',
+                border: '1px solid rgba(239, 68, 68, 0.35)',
+                borderRadius: 'var(--radius-sm)',
+                padding: '10px 12px',
+                marginBottom: '12px',
+                display: 'flex',
+                gap: '8px',
+                alignItems: 'flex-start',
+              }}>
+                <AlertTriangle size={16} color="#f87171" style={{ flexShrink: 0, marginTop: '2px' }} />
+                <div style={{ fontSize: '11px', color: '#fca5a5', lineHeight: 1.4 }}>
+                  <strong>Gas Estimate Notice:</strong> {gasFee.failure.message}
+                </div>
+              </div>
+            )}
+
+            {Number(allowance) < Number(parsedPayment.isPermanentQR ? customAmount : parsedPayment.amount) ? (
+              <button
+                type="button"
+                className="btn-primary"
+                style={{ background: 'var(--color-warning)', color: '#000', fontWeight: 700 }}
+                onClick={() => onOpenAllowanceModal && onOpenAllowanceModal(parsedPayment.isPermanentQR ? customAmount : parsedPayment.amount)}
+              >
+                <RefreshCw size={18} />
+                Refresh Allowance ({parsedPayment.isPermanentQR ? customAmount : parsedPayment.amount} MUSD Needed)
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={!parsedPayment || isProcessing}
+                onClick={handlePay}
+              >
+                {isProcessing ? (
+                  <>Processing on Mezo Testnet...</>
+                ) : (
+                  <>
+                    <Zap size={18} />
+                    Confirm 1-Tap Payment
+                    <ArrowRight size={18} />
+                  </>
+                )}
+              </button>
+            )}
           </div>
         )}
       </div>

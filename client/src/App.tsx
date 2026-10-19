@@ -25,6 +25,7 @@ import { SoundboxPOSModal } from './components/SoundboxPOSModal';
 import { BillSplitModal } from './components/BillSplitModal';
 import { TroveModal } from './components/TroveModal';
 import { SettingsModal } from './components/SettingsModal';
+import { AllowanceModal } from './components/AllowanceModal';
 
 import { fetchAccountState } from './services/payment';
 import type { AccountState } from './services/payment';
@@ -32,7 +33,7 @@ import { fetchTroveMetrics } from './services/trove';
 import type { TroveMetrics } from './services/trove';
 import { lookupAddress } from './services/names';
 import { CONTRACT_ADDRESSES, ERC20_ABI, PAYMENT_CORE_ABI } from './config/contracts';
-import { parseUnits, maxUint256 } from 'viem';
+import { parseUnits } from 'viem';
 import { publicClient } from './services/web3';
 import { fetchLiveActivity, type ActivityItem } from './services/history';
 
@@ -53,11 +54,55 @@ export function App() {
   const [showCreateIdModal, setShowCreateIdModal] = useState<boolean>(false);
   const [isLoadingAccount, setIsLoadingAccount] = useState<boolean>(false);
 
-  // Modals & Flows
   const [activeModal, setActiveModal] = useState<
     'scan' | 'send' | 'myqr' | 'requestqr' | 'pos' | 'split' | 'trove' | 'settings' | null
   >(null);
+  const [deepLinkPayload, setDeepLinkPayload] = useState<string>('');
   const [sendTargetHandle, setSendTargetHandle] = useState<string>('');
+  const [isAllowanceModalOpen, setIsAllowanceModalOpen] = useState<boolean>(false);
+  const [allowanceRequiredAmount, setAllowanceRequiredAmount] = useState<string | undefined>(undefined);
+
+  // Handle incoming deep links (/pay and /split)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const processUrl = (urlStr: string) => {
+      try {
+        const url = new URL(urlStr);
+        if (url.pathname === '/pay' || url.pathname.endsWith('/pay')) {
+          if (url.search) {
+            setDeepLinkPayload(urlStr);
+            setActiveModal('scan');
+          }
+        } else if (url.pathname === '/split' || url.pathname.endsWith('/split')) {
+          setActiveModal('split');
+        }
+      } catch (err) {
+        console.warn('Failed to parse deep link URL:', err);
+      }
+    };
+
+    // Check initial window location
+    processUrl(window.location.href);
+
+    // Capacitor native App URL Open listener
+    let capListener: any = null;
+    import('@capacitor/app').then(({ App: CapApp }) => {
+      CapApp.addListener('appUrlOpen', (data) => {
+        if (data.url) {
+          processUrl(data.url);
+        }
+      }).then((handle) => {
+        capListener = handle;
+      }).catch(() => null);
+    }).catch(() => null);
+
+    return () => {
+      if (capListener && typeof capListener.remove === 'function') {
+        capListener.remove();
+      }
+    };
+  }, []);
 
   // Real Account State: Starts at real zeroes, never hardcoded numbers
   const [accountState, setAccountState] = useState<AccountState>({
@@ -172,21 +217,10 @@ export function App() {
       const amountWei = parseUnits(amount, 18);
       const account = userProfile.address || walletClient.account;
 
-      // Ensure MUSD Allowance before payment
+      // Enforce MUSD Allowance before payment (NO silent auto-approve!)
       if (accountState.allowanceRaw < amountWei) {
-        const approveTx = await walletClient.writeContract({
-          ...(account ? { account } : {}),
-          address: CONTRACT_ADDRESSES.MUSD,
-          abi: ERC20_ABI,
-          functionName: 'approve',
-          args: [CONTRACT_ADDRESSES.PAYMENT_CORE, maxUint256],
-        });
-        await publicClient.waitForTransactionReceipt({ hash: approveTx });
-        setAccountState((prev) => ({
-          ...prev,
-          allowanceRaw: maxUint256,
-          allowance: 'Unlimited',
-        }));
+        handleOpenAllowanceModal(amount);
+        return false;
       }
 
       let txHash: `0x${string}` | null = null;
@@ -323,57 +357,42 @@ export function App() {
     }
   };
 
+  const handleOpenAllowanceModal = (required?: string) => {
+    setAllowanceRequiredAmount(required);
+    setIsAllowanceModalOpen(true);
+  };
+
   // Revoke Allowance Handler
   const handleRevokeAllowance = async (): Promise<boolean> => {
     try {
       if (!walletClient) return false;
       const account = userProfile.address || walletClient.account;
 
-      await walletClient.writeContract({
+      const txHash = await walletClient.writeContract({
         ...(account ? { account } : {}),
         address: CONTRACT_ADDRESSES.MUSD,
         abi: ERC20_ABI,
         functionName: 'approve',
         args: [CONTRACT_ADDRESSES.PAYMENT_CORE, 0n],
       });
+      await publicClient.waitForTransactionReceipt({ hash: txHash });
 
       setAccountState((prev) => ({
         ...prev,
         allowance: '0.00',
         allowanceRaw: 0n,
       }));
-      alert('Access Revoked! MUSD allowance to MezoPaymentCore set to 0.');
       return true;
-    } catch {
+    } catch (err) {
+      console.error('Revoke allowance failed:', err);
       return false;
     }
   };
 
-  // Refresh Allowance Handler
+  // Refresh Allowance Handler: Opens Allowance Chooser Modal with user-chosen amounts
   const handleRefreshAllowance = async (): Promise<boolean> => {
-    try {
-      if (!walletClient) return false;
-      const allowanceWei = parseUnits('500', 18);
-      const account = userProfile.address || walletClient.account;
-
-      await walletClient.writeContract({
-        ...(account ? { account } : {}),
-        address: CONTRACT_ADDRESSES.MUSD,
-        abi: ERC20_ABI,
-        functionName: 'approve',
-        args: [CONTRACT_ADDRESSES.PAYMENT_CORE, allowanceWei],
-      });
-
-      setAccountState((prev) => ({
-        ...prev,
-        allowance: '500.00',
-        allowanceRaw: allowanceWei,
-      }));
-      alert('Allowance Refreshed to 500.00 MUSD!');
-      return true;
-    } catch {
-      return false;
-    }
+    handleOpenAllowanceModal();
+    return true;
   };
 
   const allowanceNum = Number(accountState.allowance) || 0;
@@ -791,10 +810,16 @@ export function App() {
       {/* MODALS */}
       <ScanPayModal
         isOpen={activeModal === 'scan'}
-        onClose={() => setActiveModal(null)}
+        onClose={() => {
+          setActiveModal(null);
+          setDeepLinkPayload('');
+        }}
         onExecutePayment={handleExecutePayment}
+        initialPayload={deepLinkPayload}
+        userAddress={userProfile?.address}
         remainingDailySpend={accountState.effectiveRemainingDailySpend}
         allowance={accountState.allowance}
+        onOpenAllowanceModal={handleOpenAllowanceModal}
       />
 
       <SendNameModal
@@ -855,6 +880,21 @@ export function App() {
         onCancelPending={async () => true}
         onRevokeAllowance={handleRevokeAllowance}
         onRefreshAllowance={handleRefreshAllowance}
+      />
+
+      <AllowanceModal
+        isOpen={isAllowanceModalOpen}
+        onClose={() => setIsAllowanceModalOpen(false)}
+        currentAllowance={accountState.allowance}
+        requiredAmount={allowanceRequiredAmount}
+        walletClient={walletClient}
+        onAllowanceUpdated={(newFormatted, newRaw) => {
+          setAccountState((prev) => ({
+            ...prev,
+            allowance: newFormatted,
+            allowanceRaw: newRaw,
+          }));
+        }}
       />
     </div>
   );

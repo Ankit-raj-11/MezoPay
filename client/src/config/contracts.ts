@@ -3,20 +3,32 @@ import paymentCoreAbi from '../abis/MezoPaymentCore.json';
 
 export const MEZO_TESTNET_CHAIN_ID = 31611;
 
-export const CONTRACT_ADDRESSES = {
-  // Verified native Mezo testnet protocol contracts
-  MUSD: '0x118917a40FAF1CD7a13dB0Ef56C86De7973Ac503' as `0x${string}`,
-  BORROWER_OPERATIONS: '0xCdF7028ceAB81fA0C6971208e83fa7872994beE5' as `0x${string}`,
-  TROVE_MANAGER: '0xE47c80e8c23f6B4A1aE41c34837a0599D5D16bb0' as `0x${string}`,
-  PRICE_FEED: '0x86bCF0841622a5dAC14A313a15f96A95421b9366' as `0x${string}`,
-  SORTED_TROVES: '0x722E4D24FD6Ff8b0AC679450F3D91294607268fA' as `0x${string}`,
-  HINT_HELPERS: '0x4e4cBA3779d56386ED43631b4dCD6d8EacEcBCF6' as `0x${string}`,
+/**
+ * Unified MezoPay Protocol Configuration
+ * Centralizes all contract addresses, deployment block, and oracle price feed for Mezo Testnet (Chain ID 31611).
+ */
+export const MEZOPAY_CONFIG = {
+  chainId: 31611,
+  deploymentBlock: 16241763n,
+  priceFeed: '0x86bCF0841622a5dAC14A313a15f96A95421b9366' as `0x${string}`,
+  addresses: {
+    // Verified native Mezo testnet protocol contracts
+    MUSD: '0x118917a40FAF1CD7a13dB0Ef56C86De7973Ac503' as `0x${string}`,
+    BORROWER_OPERATIONS: '0xCdF7028ceAB81fA0C6971208e83fa7872994beE5' as `0x${string}`,
+    TROVE_MANAGER: '0xE47c80e8c23f6B4A1aE41c34837a0599D5D16bb0' as `0x${string}`,
+    PRICE_FEED: '0x86bCF0841622a5dAC14A313a15f96A95421b9366' as `0x${string}`,
+    SORTED_TROVES: '0x722E4D24FD6Ff8b0AC679450F3D91294607268fA' as `0x${string}`,
+    HINT_HELPERS: '0x4e4cBA3779d56386ED43631b4dCD6d8EacEcBCF6' as `0x${string}`,
 
-  // MezoPay custom contracts deployed live on Mezo Testnet (Chain ID 31611)
-  NAME_REGISTRY: (import.meta.env.VITE_NAME_REGISTRY_ADDRESS || '0x2068372B91fa992Ac01277F27835244530A46299') as `0x${string}`,
-  PAYMENT_CORE: (import.meta.env.VITE_PAYMENT_CORE_ADDRESS || '0x9c09b398d34481Dd65CdCDB07090FF2F2CC9E5f6') as `0x${string}`,
-  MOCK_TARGET: (import.meta.env.VITE_MOCK_TARGET_ADDRESS || '0x7617Bbb75f203c7d181B45B632F548eF1406A26d') as `0x${string}`,
-};
+    // MezoPay custom contracts deployed live on Mezo Testnet (Chain ID 31611)
+    NAME_REGISTRY: (import.meta.env.VITE_NAME_REGISTRY_ADDRESS || '0xF98A8473eF8DA5567cD56B919DfeA48315e15acb') as `0x${string}`,
+    PAYMENT_CORE: (import.meta.env.VITE_PAYMENT_CORE_ADDRESS || '0x05496Ed7957dE24E748F3C8a8c6313Cc402D2120') as `0x${string}`,
+  },
+} as const;
+
+export const CONTRACT_ADDRESSES = MEZOPAY_CONFIG.addresses;
+export const PAYMENT_CORE_DEPLOY_BLOCK = MEZOPAY_CONFIG.deploymentBlock;
+export const PRICE_FEED_ADDRESS = MEZOPAY_CONFIG.priceFeed;
 
 export const NAME_REGISTRY_ABI = nameRegistryAbi;
 export const PAYMENT_CORE_ABI = paymentCoreAbi;

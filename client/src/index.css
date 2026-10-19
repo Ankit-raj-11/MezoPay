@@ -250,7 +250,8 @@ body::after {
   border: 1px solid rgba(247, 147, 26, 0.25);
 }
 
-.badge-verified {
+.badge-active,
+.badge-status {
   background: rgba(0, 229, 153, 0.12);
   color: var(--mezo-green);
   border: 1px solid rgba(0, 229, 153, 0.25);

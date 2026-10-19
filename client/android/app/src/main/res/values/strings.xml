@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">MezoPay</string>
+    <string name="title_activity_main">MezoPay</string>
+    <string name="package_name">org.mezo.pay</string>
+    <string name="custom_url_scheme">org.mezo.pay</string>
+</resources>
